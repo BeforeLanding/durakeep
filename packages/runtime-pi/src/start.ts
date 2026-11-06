@@ -14,6 +14,8 @@ export type PiDeps = {
   /** test / demo 必须提供。 */
   faux?: FauxProviderHandle;
   extensions?: Extension[];
+  /** 需要用到共享连接的扩展（如读取宿主数据的 section）用它来构造。 */
+  extensionsFactory?: (db: NodeSqliteDatabase) => Extension[];
   now?: () => number;
 };
 
@@ -34,10 +36,10 @@ export async function startPi(deps: PiDeps): Promise<PiHandle> {
     models.setProvider(await createRealProvider(deps.mode));
   }
 
+  const db = await openNodeSqliteDatabase(deps.dbPath);
   const registry = createRegistry();
   for (const ext of deps.extensions ?? []) registry.install(ext);
-
-  const db = await openNodeSqliteDatabase(deps.dbPath);
+  for (const ext of deps.extensionsFactory?.(db) ?? []) registry.install(ext);
   const storage = await SqliteStorage.open(db, { prefix: "pi_" });
   const harness = await Harness.open(
     storage,

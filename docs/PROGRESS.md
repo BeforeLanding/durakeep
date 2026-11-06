@@ -32,6 +32,12 @@
 - 意外 / 偏离设计：任务卡写“packages/db 打开 NodeSqliteDatabase”，但它来自 chord，违反 ADR-01（只有 runtime-pi 可 import）。改为 runtime-pi 打开连接，db 包只依赖结构性接口 SqlDatabase（NodeSqliteDatabase 结构上兼容，已通过类型检查）。这不改变 ADR-02 的决策本身。K2 的 Pi run 是顺序提交于各自会话、会话间并发；没有覆盖 submit(tx, draft) 的 ReadAfterWrite 路径（业务代码不用它）。
 - 对文档的修改：03 §2 目录说明、09 T-02 产出、05 §2 注释（已验证 T-02）。ADR-02 仍待 K3（T-05）后才改状态。
 
+## 2026-11-06 T-03 section 与 write 语义验证（ADR-05）
+- 改动：runtime-pi/src/testing/section-spike.ts（异步 section 读取 app_ 表）、testing/docs.ts；startPi 增加 extensionsFactory（扩展需要共享连接）；tests/int/section-write.test.ts。
+- 测试：K5 → 通过：异步 render 读宿主表可行；10 次请求后 pi.system=1，section 渲染 10 次；改偏好后恰好 +1（共 2），再请求不再追加。K6（只记录）→ 带 requestId 的 write 去重：同 id 重复提交返回同一 submission，内容不同时以第一次为准，会话忙时与重启后重投均成立。共 3 个用例，运行 6 轮全过；pnpm test 全量 18 用例通过，pnpm lint 通过。无真实模型调用。
+- 意外 / 偏离设计：render 每次请求都会执行（不是仅在变化时），所以 profile 必须按 memory_set_revision 缓存，否则每次请求都查库。K5 只验证了“文本不变则不追加”，没有验证 prompt cache 的实际命中（faux 没有缓存）。
+- 对文档的修改：05 §4.2（K5 结论与缓存要求）、05 §6（K6 结论，去掉“先查 transcript”的备选）。DECISIONS 的 ADR-05 状态按任务卡留到 T-06 统一更新。
+
 ---
 
 ## 2026-11-06 开发前文档 v1

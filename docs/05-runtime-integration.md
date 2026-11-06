@@ -101,7 +101,7 @@ export async function startPi(deps: PiDeps): Promise<PiRuntime> {
 
 - 只包括 `scope=global`、`status=confirmed` 的记忆，按 key 排序，最多 20 条，超出部分截断并写入 `app_events`。
 - 按 `memory_set_revision` 做缓存：版本号不变时返回同一个字符串。没有记忆时返回 `undefined`，即省略这个 section。
-- **待验证 T-03**：render 能否是异步的、能否读取宿主数据库。如果不能，改为在每次记忆变化后执行 `configure({ instructions })`，写入一份偏好快照。`instructions` 渲染在最后，同样满足确定性。
+- **已验证 T-03（K5）**：`render(input, context)` 可以是异步函数，闭包里可以读取宿主数据库（与 Pi 共用连接队列）。每次请求都会重新执行 render（实测 10 次请求渲染 10 次），所以必须按 `memory_set_revision` 缓存，避免每次请求都查库；文本不变时不会追加 `pi.system`（10 次请求后只有 1 条），记忆变化后恰好追加 1 条。因此不需要 `configure({ instructions })` 的备选方案（它仍可作为后备）。
 
 ### 4.3 AppGuard：hooks
 
@@ -181,7 +181,7 @@ await conversation.submit({
 }, ctx);
 ```
 
-界面只渲染 `app.user` 条目的 `data.text`。提醒触发时写入的是 `{ type: "write", entry: { kind: "app.reminder_fired", data } }`，带 `requestId: "occ:<id>"`（**待验证 T-03**：write 是否也按 requestId 去重；如果不去重，就先查询 transcript 中是否已有这条记录）。
+界面只渲染 `app.user` 条目的 `data.text`。提醒触发时写入的是 `{ type: "write", entry: { kind: "app.reminder_fired", data } }`，带 `requestId: "occ:<id>"`（**已验证 T-03（K6）**：write 与 input 一样按 requestId 去重——同 id 再次提交返回同一个 submission，内容不同时以第一次为准；会话忙时、进程重启后重投都成立。因此不需要先查 transcript）。
 
 ## 7. RuntimePort
 
