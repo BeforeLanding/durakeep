@@ -77,7 +77,8 @@ CREATE TABLE app_ingress_events (
   channel            TEXT NOT NULL CHECK (channel IN ('web','system')),
   client_request_id  TEXT NOT NULL,
   conversation_id    TEXT NOT NULL REFERENCES app_conversations(id),
-  payload_hash       TEXT NOT NULL,       -- sha256(canonical {text, steer})
+  payload_hash       TEXT NOT NULL,       -- sha256(canonical {conversation, text, steer})：含会话 ID，同一个 client_request_id 发往不同会话也算冲突（R10）
+  payload_json       TEXT,                -- {text, steer, tz}：只为崩溃恢复而存，派发成功后置 NULL，避免正文在业务库重复保存
   pi_request_id      TEXT NOT NULL,       -- "<channel>:<client_request_id>"
   submission_id      TEXT,                -- Pi submission ID，派发后写入
   status             TEXT NOT NULL CHECK (status IN ('accepted','dispatched','rejected')),
@@ -90,13 +91,13 @@ CREATE INDEX app_ingress_pending ON app_ingress_events(status) WHERE status = 'a
 
 -- 工具幂等（ADR-04） --------------------------------------------------
 CREATE TABLE app_operations (
-  op_key        TEXT PRIMARY KEY,         -- sha256(conv, run_anchor, tool, canonical args)
   owner_id      TEXT NOT NULL,
+  op_key        TEXT NOT NULL,            -- sha256(conv, run_anchor, tool, canonical args)；已含会话，故不另存 conversation_id（T-04 实现）
   tool          TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
   args_json     TEXT NOT NULL,
   result_json   TEXT NOT NULL,            -- 原样返回给重放
-  created_at    INTEGER NOT NULL
+  created_at    INTEGER NOT NULL,
+  PRIMARY KEY (owner_id, op_key)
 );
 CREATE INDEX app_operations_owner ON app_operations(owner_id, created_at);
 

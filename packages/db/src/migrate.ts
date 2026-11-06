@@ -54,6 +54,40 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_sessions_owner ON app_sessions(owner_id);
     `,
   },
+  {
+    id: 4,
+    sql: `
+      CREATE TABLE app_conversations (
+        id                 TEXT PRIMARY KEY,
+        owner_id           TEXT NOT NULL REFERENCES app_owners(id),
+        pi_conversation_id TEXT NOT NULL UNIQUE,
+        kind               TEXT NOT NULL CHECK (kind IN ('chat','background')),
+        title              TEXT NOT NULL DEFAULT '新对话',
+        created_at         INTEGER NOT NULL,
+        last_active_at     INTEGER NOT NULL,
+        archived_at        INTEGER
+      );
+      CREATE INDEX app_conversations_owner ON app_conversations(owner_id, kind, last_active_at DESC);
+
+      CREATE TABLE app_ingress_events (
+        id                TEXT PRIMARY KEY,
+        owner_id          TEXT NOT NULL,
+        channel           TEXT NOT NULL CHECK (channel IN ('web','system')),
+        client_request_id TEXT NOT NULL,
+        conversation_id   TEXT NOT NULL REFERENCES app_conversations(id),
+        payload_hash      TEXT NOT NULL,
+        payload_json      TEXT,
+        pi_request_id     TEXT NOT NULL,
+        submission_id     TEXT,
+        status            TEXT NOT NULL CHECK (status IN ('accepted','dispatched','rejected')),
+        reject_reason     TEXT,
+        created_at        INTEGER NOT NULL,
+        dispatched_at     INTEGER,
+        UNIQUE (owner_id, channel, client_request_id)
+      );
+      CREATE INDEX app_ingress_pending ON app_ingress_events(status) WHERE status = 'accepted';
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

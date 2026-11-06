@@ -15,6 +15,7 @@
 （登记发现但未处理的问题，等用户决定是否开新任务。）
 
 - guardDb 只能检测事务回调异步链内的误用；脱离异步上下文（如 setTimeout/事件回调里再调外层 db）抓不到。依赖 AGENTS.md 规则 6 与代码评审。（T-04）
+- main.ts 的 dev / prod 路径（真实 DeepSeek provider）从未运行过；CHAT_MODEL 的取值只离线核对过目录。首次真实对话需要用户批准（AGENTS.md 硬规则 1）。（T-11）
 - TTY 下不回显的口令输入（cli init / passwd）没有自动化验证；SIGTERM 优雅关闭在 Windows 上不可测。（T-10）
 - 实例锁靠 pid 探测，不防 pid 被复用；两个进程同时接管同一把陈旧锁时，只有一个成功，另一个得到 InstanceLockedError（可重试）。（T-05）
 - 生成阶段（模型请求）反复崩溃导致 run 以 restart_limit 结束的路径未覆盖；P0 只测了工具内崩溃循环。（T-05）
@@ -74,6 +75,12 @@
 - 意外 / 偏离设计：①安装前确认了新依赖（hono、@hono/node-server，无安装脚本）。②CLI 首版用 readline 读管道输入，EOF 先触发 close 导致口令行丢失（真 bug，测试发现）；改为非 TTY 时一次性读完 stdin。③TTY 下的不回显口令输入只是实现，**未做自动化验证**（没有交互式终端）。④没有 Origin 头的处理在 06 里没写，按“浏览器跨站（Sec-Fetch-Site）拒绝、curl 放行”实现并写回 06。⑤Windows 上无法测试 SIGTERM 优雅关闭（SIGTERM 在 Windows 等同强杀），main.ts 的 shutdown 路径未测。⑥03 里写的锁文件名 data/.lock 与 T-05 实现的 app.lock 不一致，已修文档。⑦heredoc 里含 SQL 的 DELETE FROM 被安全检查误判为 rm，改用 Write 工具写文件，无影响。
 - 对文档的修改：03 §3（锁文件名）、06 §1（Origin 无头策略、413 上限）、06 §2（登录细节）、06 §10（cli 行为）。
 - 远端 CI：P0 的 8 个提交推送后四个组合（ubuntu/windows × Node 22.19.0/24）全部通过；此前“Node 22.19.0 与 Linux 未验证”的缺口已消除。
+
+## 2026-11-06 T-11 会话与入口
+- 改动：新包 packages/conversations（ConversationService：创建 / 列表（游标分页）/ 重命名 / 归档；IngressService：accept、recover、continue、abort）；db 迁移 4（app_conversations、app_ingress_events，另加 payload_json 列）；apps/server：/v1/conversations 的 GET / POST / PATCH、messages、continue、abort，发送限流 30/分钟（限额可通过 createApp 的 limits 覆盖，仅测试用）；main.ts 接入运行时（test/demo 用 faux，dev/prod 才构造 DeepSeek provider）→ 恢复扫描 → resume → 监听；core：RuntimePort 增加 resume()；runtime-pi：demoFaux()。
+- 测试：tests/int/conversations.test.ts 12 个用例，共跑 4 轮全过——CRUD / 分页 / 归档、owner 隔离（404）、消息 202 / 200 与入参校验（含恰好 8000 字符）、R9 ×20（并发同 ID 不同内容恒为一个 202 + 一个 409，且只有一条用户消息）、R10 ×20（同 ID 发往不同会话第二次 409，只有一个被派发）、FR-CHAT-03（忙时排队与 steer 均被接纳并得到回答）、FR-CHAT-04（abort 撤回排队输入，之后会话可再用）、FR-CHAT-05（model_error 可见 → continue 成功；忙时 continue 409；无可续时 nothing_to_answer）、恢复扫描与 accepted 状态重发、限流 429。tests/recovery/t11.test.ts（真实服务进程）：R1 ×20 与 ingress.after_insert ×20，各跑 2 轮共 40 次全过——被杀后重启，重发得到同一 submission（deduplicated），Pi 里恰好一条用户消息 + 一条回答，入口表恰好一条记录。最终完整运行：pnpm lint 通过；pnpm test 18 文件 56 用例通过；pnpm test:recovery 4 文件 9 用例通过。无真实模型调用（服务进程在 APP_MODE=test 下只用 faux）。
+- 意外 / 偏离设计：①04 的 app_ingress_events 没存原文，崩溃后恢复扫描无法“用原 requestId 重新提交”；加了 payload_json 列，派发成功后置 NULL（正文不在业务库重复保存）。②payload_hash 加入会话 ID，否则 R10（同 ID 发往不同会话）挡不住。③04 的 app_operations DDL 与 T-04 的实现不一致（PK 为 (owner_id, op_key)，无 conversation_id），按实现改了文档。④steer 在无工具轮的 run 里不单独产生回答（见 05 §12）。⑤03 的代码布局里没有承载会话 / 入口的包，新增 packages/conversations 并写回 03。⑥GET /entries 与 SSE 属于 T-12，本卡未做。⑦main.ts 在 dev 模式下没有被运行过（会走真实 provider），只在 test 模式下测了；dev 的模型 ID deepseek-flash 仅离线核对过存在于 pi-ai 目录。
+- 对文档的修改：03 §2；04（ingress 两列、operations）；05 §7 与 §12；06 §3。
 
 ---
 

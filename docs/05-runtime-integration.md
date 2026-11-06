@@ -189,6 +189,7 @@ await conversation.submit({
 
 ```ts
 export interface RuntimePort {
+  resume(): void;                                                      // 启动调度；在恢复扫描之后调用（03 §3）
   createConversation(input: { kind: "chat" | "background"; instructions?: string }): Promise<{ piConversationId: string }>;
   submitInput(conv: string, input: {
     text: string; requestId: string; steer: boolean; now: number; tz: string;
@@ -289,3 +290,7 @@ faux.setResponses([
 | 共享连接 | 事务回调里调用外层 `db` 会永久挂起；业务侧一律通过 `guardDb` 包装，误用时抛 `DbMisuseError` |
 | Windows `SIGKILL` | 约 5 ms 终止、不执行退出钩子；子进程 `exit` 事件为 `code=1, signal=null` |
 | pnpm 11 | 未决的依赖构建脚本会让每次 `pnpm run` 失败；在 `pnpm-workspace.yaml` 用 `allowBuilds` 显式声明 |
+| steer 与排队 | 无工具轮的 run 中，先到的追问（followUp）与随后的 steer 在第一个回答之后一起被放置，共用下一个回答（实测序列：用户→助手→用户→用户→助手）；steer 不保证单独产生回答 |
+| `abort` | 中止当前 run（输入以 `aborted` 结束），同时撤回排队中的输入（以 `unanswered` 结束），随后会话可立即再次使用 |
+| `submitContinue` | 无失败可续时不是错误，run 以 `nothing_to_answer` 结束；会话忙时 `ConversationBusy`（映射为 `RuntimeBusy` → 409） |
+| 模型错误与重试 | faux 的 `stopReason: "error"` 在 `retry.maxRetries: 0` 时立即以 `model_error` 结束；默认设置会先退避重试，测试里要显式置 0 |

@@ -48,6 +48,8 @@ export class RuntimeBusy extends Error {
 }
 
 export interface RuntimePort {
+  /** 启动调度：继续上一个进程未完成的 run 和工具（03 §3 第 8 步，在恢复扫描之后调用）。 */
+  resume(): void;
   createConversation(input: {
     kind: "chat" | "background";
     instructions?: string;

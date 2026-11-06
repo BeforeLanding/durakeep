@@ -54,6 +54,7 @@ packages/
   core/              领域类型、错误码、Clock、ID、canonical JSON、op_key
   db/                迁移、仓储基类、实例锁；只依赖结构性接口 SqlDatabase，连接由 runtime-pi 打开（ADR-01：NodeSqliteDatabase 来自 chord）
   runtime-pi/        唯一允许 import @earendil-works/* 的包：Harness、扩展、工具、RuntimePort 实现
+  conversations/     会话记录、入口幂等（app_ingress_events）、继续 / 停止、启动恢复扫描（T-11）
   knowledge/         采集、抽取、分块、分词、FTS、检索、引用校验
   memory/            记忆的增删改、section 渲染、候选提取
   reminders/         时间解析校验、schedule、Scheduler、occurrence

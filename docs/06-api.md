@@ -55,7 +55,7 @@
 | GET | `/v1/conversations/:id/entries?before=<entry_id>&limit=50` | 加载更早的条目（`AppEntry[]`） |
 | GET | `/v1/conversations/:id/stream` | SSE，见 §9 |
 | POST | `/v1/conversations/:id/messages` | 发送消息，见下文 |
-| POST | `/v1/conversations/:id/continue` | 继续一个失败的 run。会话忙时返回 409 `conversation_busy` |
+| POST | `/v1/conversations/:id/continue` | 继续一个失败的 run，返回 202 `{ "submission_id" }`。会话忙时返回 409 `conversation_busy`；没有可继续的内容时 run 以 `nothing_to_answer` 结束（不是错误） |
 | POST | `/v1/conversations/:id/abort` | 停止当前 run 并撤回排队中的输入。会话变为空闲后返回 `{ "status": "idle" }` |
 
 **发送消息：**
@@ -75,7 +75,10 @@ POST /v1/conversations/01J…/messages
 }
 ```
 
-- `text` 长度为 1–8,000 字符。
+- `client_request_id` 必须是 UUID；`text` 长度为 1–8,000 个字符（按 Unicode 码点计，全空白无效）；`steer` 可选布尔值。
+- 已归档的会话不能发送消息，返回 404；别人的会话与不存在的会话一样返回 404。
+- 同一个 `client_request_id` + 同样的内容（含同一个会话）重发返回 200 和第一次的结果（`deduplicated: true`）；内容不同、或发往另一个会话，返回 409 `idempotency_conflict`。
+- 每分钟最多 30 条（按 owner），超出返回 429。
 - `status` 可能是 `accepted`（已持久化但尚未交给 Pi，例如 Harness 正在重启），也可能是 `dispatched`。两者都表示“不会丢失”。
 - POST 不等待回答。回答通过 SSE 推送。
 

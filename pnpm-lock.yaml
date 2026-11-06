@@ -32,6 +32,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@durakeep/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
       '@durakeep/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -47,6 +50,15 @@ importers:
       hono:
         specifier: 4.13.16
         version: 4.13.16
+
+  packages/conversations:
+    dependencies:
+      '@durakeep/core':
+        specifier: workspace:*
+        version: link:../core
+      '@durakeep/db':
+        specifier: workspace:*
+        version: link:../db
 
   packages/core: {}
 

@@ -52,6 +52,10 @@ export class PiRuntime implements RuntimePort {
     this.#opts = opts;
   }
 
+  resume(): void {
+    this.#pi.harness.resume();
+  }
+
   async #conv(id: string): Promise<Conversation> {
     const c = await this.#pi.harness.conversation(Number(id) as never, context);
     if (!c) throw new Error(`会话不存在：${id}`);

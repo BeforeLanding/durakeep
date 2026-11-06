@@ -31,7 +31,7 @@ function memDb(): SqlDatabase {
 
 test("迁移幂等，且只创建 app_ 前缀的表", async () => {
   const db = memDb();
-  expect(await migrate(db)).toBe(3);
+  expect(await migrate(db)).toBe(4);
   expect(await migrate(db)).toBe(0);
   const tables = (await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")).map((t) => t.name);
   expect(tables.every((t) => t.startsWith("app_"))).toBe(true);

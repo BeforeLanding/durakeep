@@ -1,4 +1,5 @@
 import { AppError, type Clock, type ErrorCode } from "@durakeep/core";
+import type { ConversationService, IngressService } from "@durakeep/conversations";
 import type { SqlDatabase } from "@durakeep/db";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -35,6 +36,10 @@ export type AppDeps = {
   origin: string;
   /** /v1/health：运行时失效或恢复中时返回 false → 503。 */
   isHealthy?: () => boolean;
+  /** 会话与入口（T-11）；未提供时不挂载 /v1/conversations。 */
+  chat?: { conversations: ConversationService; ingress: IngressService };
+  /** 覆盖默认限流（每分钟次数），测试用。 */
+  limits?: Partial<Record<keyof typeof LIMITS, number>>;
   /** 日志只记 ID 与状态（AGENTS.md 硬规则 9）。 */
   log?: (e: LogEvent) => void;
 };
@@ -111,7 +116,7 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post("/v1/auth/login", async (c) => {
-    const wait = limiter.hit("login", LIMITS.login);
+    const wait = limiter.hit("login", deps.limits?.login ?? LIMITS.login);
     if (wait !== undefined) throw new AppError("rate_limited", "请求过于频繁", { retry_after_ms: wait });
     const body = await readJson(c);
     const password = (body as { password?: unknown } | null)?.password;
@@ -141,10 +146,76 @@ export function createApp(deps: AppDeps) {
     return c.json({ owner_id: o.id, display_name: o.displayName, timezone: o.timezone });
   });
 
+  if (deps.chat) mountConversationRoutes(app, deps.chat, limiter, deps.limits);
+
   return { app, auth, limiter };
 }
 
-async function readJson(c: Context): Promise<unknown> {
+function mountConversationRoutes(
+  app: Hono<AppEnv>,
+  chat: NonNullable<AppDeps["chat"]>,
+  limiter: RateLimiter,
+  limits?: AppDeps["limits"],
+) {
+  const { conversations, ingress } = chat;
+  const present = (c: { id: string; title: string; createdAt: number; lastActiveAt: number; archived: boolean }) => ({
+    id: c.id,
+    title: c.title,
+    created_at: c.createdAt,
+    last_active_at: c.lastActiveAt,
+    archived: c.archived,
+  });
+
+  app.get("/v1/conversations", async (c) => {
+    const limit = c.req.query("limit");
+    const n = limit === undefined ? undefined : Number(limit);
+    if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > 100)) {
+      throw new AppError("invalid_request", "limit 需为 1–100 的整数", { issues: [{ path: "limit" }] });
+    }
+    const page = await conversations.list(c.get("owner").id, { limit: n, cursor: c.req.query("cursor") });
+    return c.json({ items: page.items.map(present), next_cursor: page.nextCursor });
+  });
+
+  app.post("/v1/conversations", async (c) => {
+    const body = (await readJson(c, true)) as { title?: unknown } | null;
+    const created = await conversations.create(c.get("owner").id, body?.title as string | undefined);
+    return c.json(present(created), 201);
+  });
+
+  app.patch("/v1/conversations/:id", async (c) => {
+    const body = (await readJson(c)) as { title?: unknown; archived?: unknown } | null;
+    const updated = await conversations.update(c.get("owner").id, c.req.param("id"), body ?? {});
+    return c.json(present(updated));
+  });
+
+  app.post("/v1/conversations/:id/messages", async (c) => {
+    const owner = c.get("owner");
+    const wait = limiter.hit(`msg:${owner.id}`, limits?.message ?? LIMITS.message);
+    if (wait !== undefined) throw new AppError("rate_limited", "发送过于频繁", { retry_after_ms: wait });
+    const body = (await readJson(c)) as { client_request_id?: unknown; text?: unknown; steer?: unknown } | null;
+    const r = await ingress.accept(owner, c.req.param("id"), {
+      clientRequestId: body?.client_request_id,
+      text: body?.text,
+      steer: body?.steer,
+    });
+    return c.json(
+      { ingress_id: r.ingressId, submission_id: r.submissionId, status: r.status, deduplicated: r.deduplicated },
+      r.deduplicated ? 200 : 202,
+    );
+  });
+
+  app.post("/v1/conversations/:id/continue", async (c) => {
+    const r = await ingress.continue(c.get("owner").id, c.req.param("id"));
+    return c.json({ submission_id: r.submissionId }, 202);
+  });
+
+  app.post("/v1/conversations/:id/abort", async (c) => {
+    return c.json(await ingress.abort(c.get("owner").id, c.req.param("id")));
+  });
+}
+
+async function readJson(c: Context, optional = false): Promise<unknown> {
+  if (optional && (await c.req.raw.clone().text()) === "") return null;
   try {
     return await c.req.json();
   } catch {

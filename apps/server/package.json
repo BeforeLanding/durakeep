@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@durakeep/conversations": "workspace:*",
     "@durakeep/core": "workspace:*",
     "@durakeep/db": "workspace:*",
     "@durakeep/runtime-pi": "workspace:*",
