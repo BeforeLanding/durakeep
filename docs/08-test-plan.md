@@ -33,7 +33,7 @@ export function fault(point: FaultPoint): void {
   if (process.env.FAULT_POINT !== point) return;
   const n = Number(process.env.FAULT_HIT ?? "1");
   hits.set(point, (hits.get(point) ?? 0) + 1);
-  if (hits.get(point) === n) process.kill(process.pid, "SIGKILL"); // Windows 上等同于 TerminateProcess
+  if (hits.get(point) === n) process.kill(process.pid, "SIGKILL"); // Windows 上等同于 TerminateProcess（T-01 实测：立即终止、不执行退出钩子；但子进程的 exit 事件是 code=1、signal=null，驱动不能依赖 signal==="SIGKILL"）
 }
 ```
 

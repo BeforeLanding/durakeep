@@ -249,7 +249,7 @@ export type ConversationSnapshot = {
 import { fauxProvider, fauxAssistantMessage, fauxToolCall, fauxText } from "@earendil-works/pi-ai/providers/faux";
 const faux = fauxProvider();
 faux.setResponses([
-  fauxAssistantMessage(fauxToolCall("kb_search", { query: "间隔重复" })),
+  fauxAssistantMessage(fauxToolCall("kb_search", { query: "间隔重复" }), { stopReason: "toolUse" }), // 带工具调用必须显式 toolUse，默认 "stop" 会被当作最终回答
   fauxAssistantMessage("间隔重复建议逐步拉长复习间隔 [1]。\n<citations>\n[1] chunk:1\n</citations>"),
 ]);
 ```
