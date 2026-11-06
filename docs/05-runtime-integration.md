@@ -269,3 +269,23 @@ faux.setResponses([
 | `afterRun` | 会延长会话的忙碌状态；后台工作走作业队列 |
 | JSONL 存储 | 会把全部历史常驻内存 |
 | 主分支 Unreleased 的 API | 只用已发布的 1.5.0 |
+
+## 12. 1.5.0 实际行为备忘（P0 实测）
+
+以下是 P0 中在已发布的 1.5.0 上实测得到的行为，与文档示例或直觉不同处已在对应章节修正；这里集中列出，供写代码时查阅。证据见 [P0-REPORT](spikes/P0-REPORT.md)。
+
+| 主题 | 实测行为 |
+|---|---|
+| faux 工具调用 | `fauxAssistantMessage` 默认 `stopReason: "stop"`；带工具调用必须传 `{ stopReason: "toolUse" }`，否则工具不执行 |
+| faux 检查请求 | `setResponses` 可放函数 `(context) => message`，用来断言模型实际收到的内容（如时间信封） |
+| `Submission.wait()` | `done` 时的 `answer` 是助手条目的 **ID**；取文本需 `conversation.entries({ minEntryId, maxEntryId }, 1, …)`。`unanswered` 的 `reason` 为字符串，不止 `RunFailureReason` |
+| section `render` | 可异步、可读宿主库；**每次请求都执行**；文本不变不追加 `pi.system` |
+| `write` + `requestId` | 与 input 一样去重：同 id 返回同一 submission，内容不同以第一次为准；会话忙、重启后都成立 |
+| run 锚点 | `api.snapshot(LiveDoc, api.conversationId, ctx)?.run?.first`；同 run 多轮不变，新 run 变化，重启稳定；类型可选，读不到要报错 |
+| `pi.live` 形状 | `tools` 是数组（`callId/name/status/diagnostics`）；部分回答在 `generation.message`；排队在 `pi.inbox.items` |
+| 工具崩溃循环 | 崩溃 `restartLimit`（默认 5）次后，该工具调用以错误结果结束（“interrupted 5 times in a row; it is not run again”，diagnostic `restart_limit`），`onReport` 收到 `task_interrupted`，run 继续并完成 |
+| 流式中崩溃 | 重启后按 retry 退避约 2.1 s 重试；第一秒内的崩溃不留下 aborted 半截条目 |
+| 存储写入失败 | 下一次提交失败 → `harness.closed` 以 `failed` 结束、等待中的调用以 `SessionFailed` 拒绝；宿主应在 `onFatal` 里退出进程 |
+| 共享连接 | 事务回调里调用外层 `db` 会永久挂起；业务侧一律通过 `guardDb` 包装，误用时抛 `DbMisuseError` |
+| Windows `SIGKILL` | 约 5 ms 终止、不执行退出钩子；子进程 `exit` 事件为 `code=1, signal=null` |
+| pnpm 11 | 未决的依赖构建脚本会让每次 `pnpm run` 失败；在 `pnpm-workspace.yaml` 用 `allowBuilds` 显式声明 |
