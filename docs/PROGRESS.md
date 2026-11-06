@@ -26,6 +26,12 @@
 - 意外 / 偏离设计：①Windows 上被 SIGKILL 的子进程 exit 事件是 code=1、signal=null，驱动不能依赖 signal；终止延迟约 5 ms，退出钩子不执行（符合要求）。②faux 的 fauxAssistantMessage 默认 stopReason 为 "stop"，带工具调用必须传 { stopReason: "toolUse" }，否则工具不会执行、被当作最终回答。③故障场景此时只覆盖“工具内被杀”，其余故障点随各任务加入。
 - 对文档的修改：05 §10 的 faux 示例加 stopReason: "toolUse"；08 §3 注明 Windows 实测的 exit 事件形态。
 
+## 2026-11-06 T-02 共享数据库验证（ADR-02）
+- 改动：packages/db（结构性接口 SqlDatabase、迁移 app_migrations / app_probe）；runtime-pi/src/testing/faux.ts（测试再导出 faux，避免测试直接 import @earendil-works）；tests/int/shared-db.test.ts。
+- 测试：K1（同文件 pi_/app_ 表并存；提交、关闭、重开后 Pi 根会话与条目、业务行都在；同 requestId 找回同一 submission；faux 仅被调用 1 次）→ 通过。K2（10 个会话并发共 1000 次 Pi run + 1000 个多语句业务事务交错）→ 通过：无死锁、错误 0、无 ReadAfterWrite、callCount=1000、业务行=1000，单轮约 1.1 s。K1/K2 共运行 6 轮（含 1 轮 verbose），全部通过；pnpm test 全量 15 用例通过，pnpm lint 通过。
+- 意外 / 偏离设计：任务卡写“packages/db 打开 NodeSqliteDatabase”，但它来自 chord，违反 ADR-01（只有 runtime-pi 可 import）。改为 runtime-pi 打开连接，db 包只依赖结构性接口 SqlDatabase（NodeSqliteDatabase 结构上兼容，已通过类型检查）。这不改变 ADR-02 的决策本身。K2 的 Pi run 是顺序提交于各自会话、会话间并发；没有覆盖 submit(tx, draft) 的 ReadAfterWrite 路径（业务代码不用它）。
+- 对文档的修改：03 §2 目录说明、09 T-02 产出、05 §2 注释（已验证 T-02）。ADR-02 仍待 K3（T-05）后才改状态。
+
 ---
 
 ## 2026-11-06 开发前文档 v1

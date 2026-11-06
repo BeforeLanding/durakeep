@@ -30,7 +30,7 @@
 - DoD：子进程在故障点被 `SIGKILL` 后，重启能读到已提交的条目；确认 Windows 上的 SIGKILL 是立即终止（记录在 P0-REPORT 中）。
 
 **T-02 · 共享数据库验证（ADR-02）**（0.5）· T-01
-- 产出：`packages/db`：打开 `NodeSqliteDatabase`、执行迁移、`SqliteStorage.open(db, { prefix: "pi_" })`；交错压测脚本。
+- 产出：`packages/db`：迁移与结构性接口 `SqlDatabase`（不 import chord，ADR-01）；`runtime-pi` 打开 `NodeSqliteDatabase` 并 `SqliteStorage.open(db, { prefix: "pi_" })`，同一个实例交给 db 包使用；交错压测。
 - DoD：K1、K2 通过。失败时回退到双文件，修改 ADR-02、03 §4 和 05 §2，并记录原因。
 
 **T-03 · section 与 write 语义验证（ADR-05）**（0.5）· T-01

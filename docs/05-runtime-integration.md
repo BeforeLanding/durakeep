@@ -35,7 +35,7 @@ export async function startPi(deps: PiDeps): Promise<PiRuntime> {
   const registry = createRegistry();
   for (const ext of buildExtensions(deps.services)) registry.install(ext);
 
-  const storage = await SqliteStorage.open(deps.db /* 共享 NodeSqliteDatabase */, { prefix: "pi_" }); // 待验证 T-02
+  const storage = await SqliteStorage.open(deps.db /* 共享 NodeSqliteDatabase */, { prefix: "pi_" }); // 已验证 T-02（K1、K2）；连接由 runtime-pi 打开，业务侧只见 SqlDatabase 接口
   const harness = await Harness.open(storage, {
     models,
     registry,
