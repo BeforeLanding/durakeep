@@ -14,6 +14,20 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_probe_owner ON app_probe(owner_id, n);
     `,
   },
+  {
+    id: 2,
+    sql: `
+      CREATE TABLE app_operations (
+        owner_id TEXT NOT NULL,
+        op_key TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (owner_id, op_key)
+      );
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

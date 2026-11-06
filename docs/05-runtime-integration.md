@@ -154,7 +154,7 @@ const reminderCreate = defineTool({
   callers: ["model"],
   execute: async (args, api, ctx) => {
     const conv = await services.conversations.byPiId(api.conversationId);   // 包含 owner
-    const anchor = await runAnchor(api, ctx);                                // 待验证 T-04
+    const anchor = await runAnchor(api, ctx);                                // 已验证 T-04（K4）
     const key = opKey(conv.id, anchor, "reminder_create", normalizeReminder(args));
     const result = await services.operations.once(conv.ownerId, key, "reminder_create", args, () =>
       services.reminders.create(conv.ownerId, conv.id, args),               // 与幂等记录在同一个业务事务里
@@ -165,7 +165,7 @@ const reminderCreate = defineTool({
 });
 ```
 
-`runAnchor(api)`：`(await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.first`。**待验证 T-04**。读不到时的备选方案：入口提交时把 `submission_id` 写入一个 conversation 作用域的 Pi Document（`app.run_meta`），工具从这个 Document 读取。
+`runAnchor(api)`：`(await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.first`。**已验证 T-04（K4）**：工具内 `api.snapshot(LiveDoc, api.conversationId, ctx)` 可读，`run.first` 在同一 run 的多轮工具调用中保持不变（实测同一 run 内两次调用锚点相同，新 run 变化），进程重启后依然稳定（R2 ×20）。注意类型上 `run.first` 是可选的（“启动于记录之前的 run 可能没有”）：读不到时应报错而不是继续，备选方案：入口提交时把 `submission_id` 写入一个 conversation 作用域的 Pi Document（`app.run_meta`），工具从这个 Document 读取。
 
 `operations.once` 在一个 `db.transaction` 中完成“查询 → 执行 → 写入”。执行函数内部必须使用同一个事务句柄，不能再开新事务，否则 chord 的队列会死锁（README 明确说明：在事务回调里直接调用 database 永远不会返回）。
 

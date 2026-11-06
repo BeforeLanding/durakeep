@@ -14,6 +14,8 @@
 
 （登记发现但未处理的问题，等用户决定是否开新任务。）
 
+- guardDb 只能检测事务回调异步链内的误用；脱离异步上下文（如 setTimeout/事件回调里再调外层 db）抓不到。依赖 AGENTS.md 规则 6 与代码评审。（T-04）
+
 ## 2026-11-06 T-00 仓库骨架
 - 改动：pnpm workspace（packages/core、db、runtime-pi，apps/server 占位）；tsconfig（strict、erasableSyntaxOnly、nodenext）；vitest 三个 project（unit / int / recovery）；eslint 10 + dependency-cruiser 规则（ADR-01 两条：仅 runtime-pi 可 import @earendil-works/*、业务包不依赖 runtime-pi）；.nvmrc、engines、CI（ubuntu/windows × Node 22.19.0/24）；测试 setup 强制 APP_MODE=test 并清除 *_API_KEY 环境变量。依赖全部精确版本；@earendil-works/* 四个包 1.5.0 仅在 runtime-pi。
 - 测试：pnpm test → 3 passed（空测试 + 依赖规则违规时失败 + 当前仓库通过）；pnpm lint → 通过（depcruise、eslint、tsc）；pnpm test:recovery → 无用例（passWithNoTests）。CI 工作流未在远端运行。
@@ -37,6 +39,12 @@
 - 测试：K5 → 通过：异步 render 读宿主表可行；10 次请求后 pi.system=1，section 渲染 10 次；改偏好后恰好 +1（共 2），再请求不再追加。K6（只记录）→ 带 requestId 的 write 去重：同 id 重复提交返回同一 submission，内容不同时以第一次为准，会话忙时与重启后重投均成立。共 3 个用例，运行 6 轮全过；pnpm test 全量 18 用例通过，pnpm lint 通过。无真实模型调用。
 - 意外 / 偏离设计：render 每次请求都会执行（不是仅在变化时），所以 profile 必须按 memory_set_revision 缓存，否则每次请求都查库。K5 只验证了“文本不变则不追加”，没有验证 prompt cache 的实际命中（faux 没有缓存）。
 - 对文档的修改：05 §4.2（K5 结论与缓存要求）、05 §6（K6 结论，去掉“先查 transcript”的备选）。DECISIONS 的 ADR-05 状态按任务卡留到 T-06 统一更新。
+
+## 2026-11-06 T-04 写工具幂等（ADR-04）
+- 改动：core/canonicalJson.ts、core/opKey.ts；db：app_operations（迁移 2）、operations.once()、guardDb()（AsyncLocalStorage 检测事务回调内误用外层 db）；runtime-pi：runAnchor() 与实验写工具 probe_write（write-tool-spike.ts）、子进程场景 child-write.ts；runtime-pi 新增对 @durakeep/db 的工作区依赖。
+- 测试：K4（tests/int/write-idempotency.test.ts）→ 通过：锚点可读；同 run 两次调用（参数仅首尾空白不同）op_key 相同，第二次 deduplicated；第二个 run 锚点与 op_key 都不同，业务效果各一次（共 2 行）。R2 × 20（tests/recovery/r2.test.ts，每次杀进程 + 重启）→ 20/20 通过，另整套再跑 1 轮（20 次）也通过，共 40 次：业务效果恒为 1 行、app_operations 恒为 1 行、重启后 deduplicated=true 且 op_key 不变、模型仅再被请求 1 次。guardDb 单测 3 个：未包装的 db 在事务回调里调外层 db 会挂死（复现），guardDb 下 5 种误用（get/run/all/exec/transaction）都抛 DbMisuseError，异步延后的误用也能抓到。pnpm test 25 用例通过；pnpm lint 通过。无真实模型调用。
+- 意外 / 偏离设计：①guardDb 的检测基于 AsyncLocalStorage：只覆盖从事务回调的异步链里发起的调用；回调里 fire-and-forget 出去、脱离异步上下文的调用抓不到（已知缺口）。②run.first 在类型上是可选的，读不到时工具应报错（实现里是抛错），否则会按 undefined 算 key。③单测里的“挂死”用模拟的排队 db 复现，没有用真实的 NodeSqliteDatabase 去制造死锁连接。
+- 对文档的修改：05 §5.2 两处（锚点已验证、run.first 可选的注意事项）。
 
 ---
 

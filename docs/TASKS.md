@@ -8,7 +8,7 @@
 | P0 | T-01 Pi 最小链路与故障注入框架 | done | |
 | P0 | T-02 共享数据库验证（ADR-02） | done | K1、K2 通过；ADR-02 仍待 K3（T-05） | |
 | P0 | T-03 section 与 write 语义验证（ADR-05） | done | K5 通过、K6 去重；ADR-05 状态在 T-06 更新 | |
-| P0 | T-04 写工具幂等（ADR-04） | todo | |
+| P0 | T-04 写工具幂等（ADR-04） | done | K4、R2×20 通过；ADR-04 状态在 T-06 更新 | |
 | P0 | T-05 实例锁、存储失败与备份 | todo | |
 | P0 | T-06 RuntimePort 与 P0 报告 | todo | 出口 G0 |
 | P1 | T-10 认证与 HTTP 骨架 | todo | |
