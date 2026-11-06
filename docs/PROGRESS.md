@@ -15,6 +15,9 @@
 （登记发现但未处理的问题，等用户决定是否开新任务。）
 
 - guardDb 只能检测事务回调异步链内的误用；脱离异步上下文（如 setTimeout/事件回调里再调外层 db）抓不到。依赖 AGENTS.md 规则 6 与代码评审。（T-04）
+- 实例锁靠 pid 探测，不防 pid 被复用；两个进程同时接管同一把陈旧锁时，只有一个成功，另一个得到 InstanceLockedError（可重试）。（T-05）
+- 生成阶段（模型请求）反复崩溃导致 run 以 restart_limit 结束的路径未覆盖；P0 只测了工具内崩溃循环。（T-05）
+- 备份只测了运行中单次 VACUUM INTO；未测重度并发写入下的备份耗时与对对话提交的阻塞（ADR-02 已说明批量写入需分批）。（T-05）
 
 ## 2026-11-06 T-00 仓库骨架
 - 改动：pnpm workspace（packages/core、db、runtime-pi，apps/server 占位）；tsconfig（strict、erasableSyntaxOnly、nodenext）；vitest 三个 project（unit / int / recovery）；eslint 10 + dependency-cruiser 规则（ADR-01 两条：仅 runtime-pi 可 import @earendil-works/*、业务包不依赖 runtime-pi）；.nvmrc、engines、CI（ubuntu/windows × Node 22.19.0/24）；测试 setup 强制 APP_MODE=test 并清除 *_API_KEY 环境变量。依赖全部精确版本；@earendil-works/* 四个包 1.5.0 仅在 runtime-pi。
@@ -45,6 +48,12 @@
 - 测试：K4（tests/int/write-idempotency.test.ts）→ 通过：锚点可读；同 run 两次调用（参数仅首尾空白不同）op_key 相同，第二次 deduplicated；第二个 run 锚点与 op_key 都不同，业务效果各一次（共 2 行）。R2 × 20（tests/recovery/r2.test.ts，每次杀进程 + 重启）→ 20/20 通过，另整套再跑 1 轮（20 次）也通过，共 40 次：业务效果恒为 1 行、app_operations 恒为 1 行、重启后 deduplicated=true 且 op_key 不变、模型仅再被请求 1 次。guardDb 单测 3 个：未包装的 db 在事务回调里调外层 db 会挂死（复现），guardDb 下 5 种误用（get/run/all/exec/transaction）都抛 DbMisuseError，异步延后的误用也能抓到。pnpm test 25 用例通过；pnpm lint 通过。无真实模型调用。
 - 意外 / 偏离设计：①guardDb 的检测基于 AsyncLocalStorage：只覆盖从事务回调的异步链里发起的调用；回调里 fire-and-forget 出去、脱离异步上下文的调用抓不到（已知缺口）。②run.first 在类型上是可选的，读不到时工具应报错（实现里是抛错），否则会按 undefined 算 key。③单测里的“挂死”用模拟的排队 db 复现，没有用真实的 NodeSqliteDatabase 去制造死锁连接。
 - 对文档的修改：05 §5.2 两处（锚点已验证、run.first 可选的注意事项）。
+
+## 2026-11-06 T-05 实例锁、存储失败与备份
+- 改动：db：acquireInstanceLock（app.lock，wx 独占 + pid 探测，陈旧锁接管）、backupInto（经同一连接队列 VACUUM INTO 到 .partial 再原子改名，含 backup.before_vacuum / after_vacuum 故障点）；runtime-pi：startPi 增加 onFatal（harness.closed 为 failed 时回调）、onReport、settings；子进程场景 child-p0.ts；tests/support/driver.ts 增加 spawnChild；tests/recovery/t05.test.ts。
+- 测试：tests/recovery/t05.test.ts，每个用例 ×20，整套跑了 2 轮（共 40 次）全部通过：R8（PRAGMA query_only 使后续写入失败 → harness.closed=failed → onFatal → 进程退出码 3；重启后接管陈旧锁，已接纳的 pi.user 仍在，run 完成，模型仅被请求 1 次）；R15（每次启动都在同一工具里被杀：恒为崩溃 5 次后工具调用以 “interrupted 5 times in a row; it is not run again” 的错误结果结束，onReport 收到 task_interrupted，run 正常完成，probeRows=0 即工具从未成功）；R16（持有者运行期间闯入者以退出码 5 / InstanceLockedError 被拒，持有者继续完成 run）；K3（工具执行中、run 未完成时 VACUUM INTO，副本 integrity_check=ok，用副本启动后 run 恢复，业务行恰好 1 行，tool-result 与最终回答都在）。另有 InstanceLock 单测 4 个。pnpm test 29 用例通过，pnpm lint 通过。无真实模型调用。
+- 意外 / 偏离设计：①R15 与 08 的措辞不一致：工具内崩溃循环的结局是“该工具调用以 restart_limit 错误结果结束、run 继续并完成”，不是 “run 以 restart_limit 结束”；已改 08 R15 行。②backup.mid_vacuum 无法在进程内注入（node:sqlite 同步，语句执行期间事件循环被阻塞）；改为 before/after 两个故障点 + .partial 改名。③R8 用 PRAGMA query_only=ON 模拟存储写入失败（真实 SQLite 报错路径），不是真正的磁盘满 / 只读文件。④K3 只验证了单进程运行中备份；没有测并发写入压力下的备份。
+- 对文档的修改：08 §3 故障点表、08 §4 R15 行。
 
 ---
 
