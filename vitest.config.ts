@@ -6,7 +6,7 @@ const setupFiles = ["./tests/setup/no-paid-calls.ts"];
 export default defineConfig({
   test: {
     projects: [
-      { test: { name: "unit", include: ["packages/*/src/**/*.test.ts"], setupFiles } },
+      { test: { name: "unit", include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"], setupFiles } },
       { test: { name: "int", include: ["tests/int/**/*.test.ts"], setupFiles, testTimeout: 60_000 } },
       {
         test: {

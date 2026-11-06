@@ -52,7 +52,7 @@
 | GET | `/v1/conversations` | 列表（只包含 `kind=chat`），按 `last_active_at` 倒序 |
 | POST | `/v1/conversations` | `{ "title"?: string }`，返回 201 和会话对象 |
 | PATCH | `/v1/conversations/:id` | `{ "title"?, "archived"?: boolean }` |
-| GET | `/v1/conversations/:id/entries?before=<entry_id>&limit=50` | 加载更早的条目（`AppEntry[]`） |
+| GET | `/v1/conversations/:id/entries?before=<entry_id>&limit=50` | 加载更早的条目：`{ "entries": AppEntry[], "has_earlier": boolean }`。`before` 不含，缺省从最新开始；`limit` 1–100；条目按 ID 升序，只含可展示的类型 |
 | GET | `/v1/conversations/:id/stream` | SSE，见 §9 |
 | POST | `/v1/conversations/:id/messages` | 发送消息，见下文 |
 | POST | `/v1/conversations/:id/continue` | 继续一个失败的 run，返回 202 `{ "submission_id" }`。会话忙时返回 409 `conversation_busy`；没有可继续的内容时 run 以 `nothing_to_answer` 结束（不是错误） |
@@ -96,7 +96,7 @@ POST /v1/conversations/01J…/messages
     { "n": 1, "chunk_id": 1234, "document_id": "…", "version_id": "…", "title": "…", "loc": "二、方法", "valid": true }
   ], "at": … }
 { "id": "…", "type": "tool", "name": "kb_search", "ok": true, "summary": "命中 4 个片段", "at": … }
-{ "id": "…", "type": "event", "kind": "reminder_fired", "text": "提醒：看完《间隔重复的科学》", "at": … }
+{ "id": "…", "type": "event", "kind": "reminder_fired", "data": { … } }
 { "id": "…", "type": "compaction", "at": … }
 ```
 
@@ -215,8 +215,11 @@ data: {…}
 : keep-alive   （每 15 秒一次）
 ```
 
-- 每次 Pi 提交都会推送一次完整的 `ConversationSnapshot`，服务端按 100 ms 节流。单用户场景下快照最多包含 100 条条目，直接发送全量比发送增量 ops 简单，也更不容易出错。
-- 重连时浏览器会自动带上 `Last-Event-ID`，服务端用它作为 `transcript.resume` 游标，只补发错过的部分；游标失效时从最新窗口开始，并设置 `hasEarlier: true`。
+- 每次 Pi 提交都会推送一次完整的 `ConversationSnapshot`，服务端按 100 ms 节流（尾部节流：窗口内只发最新的一个，首个立即发送）。单用户场景下快照最多包含 100 条条目，直接发送全量比发送增量 ops 简单，也更不容易出错。
+- `id` 是恢复游标（不透明的数字串）。空会话的第一个快照没有 `id`。`live.runFailure` 带 `reason`、可选 `detail` 和中文 `message`（05 §9 的对照表）。
+- 条目的 `at` 只有用户条目有（来自输入信封的 `app.user`）；助手 / 工具条目没有时间戳。
+- 不属于当前 owner 的会话与不存在的会话一样返回 404 JSON，不开流；客户端断开后服务端立即释放观察者（实测约 35 ms）。
+- 重连时浏览器会自动带上 `Last-Event-ID`，服务端用它作为 `transcript.resume` 游标：**重连后的快照只含游标之后错过的条目**（可以为空），客户端按条目 `id` 与已有内容合并，不要整体替换。游标不是数字（无效）时从最新窗口开始；游标超前于最新条目时从空开始，等待新条目。
 - `entries` 中助手条目的引用已经过服务端校验（`valid` 字段）。
 
 ### 9.2 全局流：`GET /v1/stream`
@@ -224,7 +227,7 @@ data: {…}
 ```text
 event: notification   data: {"id":"…","kind":"reminder","title":"提醒","body":"…","link":"/documents/…"}
 event: job            data: {"id":"…","kind":"ingest_url","status":"succeeded","document_id":"…"}
-event: runtime        data: {"status":"ok"|"restarting"|"failed"}
+event: runtime        data: {"status":"ok"|"restarting"|"failed"}   （连接建立后立即发一次当前状态）
 event: unread         data: {"count":3}
 ```
 

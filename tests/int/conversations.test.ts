@@ -37,7 +37,7 @@ async function setup(opts: { tokensPerSecond?: number; limits?: { message: numbe
   runtime = new PiRuntime(pi, { model });
   conversations = new ConversationService(db, runtime, systemClock);
   ingress = new IngressService(db, runtime, systemClock, conversations);
-  h = createApp({ db, clock: systemClock, origin: ORIGIN, chat: { conversations, ingress }, limits: opts.limits });
+  h = createApp({ db, clock: systemClock, origin: ORIGIN, chat: { conversations, ingress, runtime }, limits: opts.limits, sse: { keepAliveMs: 50 } });
   const owner = await h.auth.initOwner({ password: PASSWORD, timezone: "Asia/Shanghai" });
   ownerId = owner.id;
   const login = await h.app.request("/v1/auth/login", {

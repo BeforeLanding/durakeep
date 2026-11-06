@@ -13,7 +13,7 @@ P0 | T-01 Pi 最小链路与故障注入框架 | done | |
 | P0 | T-06 RuntimePort 与 P0 报告 | done | G0 通过，见 spikes/P0-REPORT.md；出口 G0 |
 | P1 | T-10 认证与 HTTP 骨架 | done | S1–S4 通过 | |
 | P1 | T-11 会话与入口 | done | R1、R9、R10、FR-CHAT-03/04/05 通过 | |
-| P1 | T-12 SSE 与快照转换 | todo | |
+| P1 | T-12 SSE 与快照转换 | done | 断线重连只补发缺失条目 | |
 | P1 | T-13 采集 | todo | |
 | P1 | T-14 分块、分词、FTS | todo | |
 | P1 | T-15 检索与知识工具 | todo | |

@@ -7,6 +7,7 @@ import { demoFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { createApp, type LogEvent } from "./app.ts";
+import { EventHub } from "./hub.ts";
 import { listen } from "./listen.ts";
 
 const mode = readAppMode();
@@ -43,6 +44,7 @@ const pi = await startPi({
   onFatal: (error) => {
     // 03 §6：Harness 失效 → 停止接纳 → 记录 → 退出，由进程管理器拉起；重启后恢复
     healthy = false;
+    hub.publish({ ownerId: "*", event: "runtime", data: { status: "failed" } });
     log({ level: "error", event: "pi.fatal", error: (error as Error).name });
     process.exit(3);
   },
@@ -56,12 +58,14 @@ const ingress = new IngressService(db, runtime, systemClock, conversations, log)
 await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
 
+const hub = new EventHub();
 const { app } = createApp({
   db,
   clock: systemClock,
   origin: `http://${host}:${port}`,
   isHealthy: () => healthy,
-  chat: { conversations, ingress },
+  chat: { conversations, ingress, runtime },
+  hub,
   log,
 });
 const server = await listen(app.fetch, { host, port });

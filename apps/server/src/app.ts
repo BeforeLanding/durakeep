@@ -1,11 +1,16 @@
 import { AppError, type Clock, type ErrorCode } from "@durakeep/core";
 import type { ConversationService, IngressService } from "@durakeep/conversations";
+import type { ConversationSnapshot, RuntimePort } from "@durakeep/core";
 import type { SqlDatabase } from "@durakeep/db";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { AuthService, SESSION_TTL_MS, type Owner } from "./auth.ts";
+import { EventHub } from "./hub.ts";
+import { presentEntry, presentSnapshot } from "./present.ts";
 import { RateLimiter } from "./rateLimit.ts";
+import { latestThrottle } from "./throttle.ts";
 
 // 06 §1 的错误码 → HTTP 状态
 const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 429 | 500 | 503> = {
@@ -37,7 +42,11 @@ export type AppDeps = {
   /** /v1/health：运行时失效或恢复中时返回 false → 503。 */
   isHealthy?: () => boolean;
   /** 会话与入口（T-11）；未提供时不挂载 /v1/conversations。 */
-  chat?: { conversations: ConversationService; ingress: IngressService };
+  chat?: { conversations: ConversationService; ingress: IngressService; runtime: RuntimePort };
+  /** 全局事件中心（06 §9.2）；缺省时由 createApp 新建。 */
+  hub?: EventHub;
+  /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
+  sse?: { throttleMs?: number; keepAliveMs?: number };
   /** 覆盖默认限流（每分钟次数），测试用。 */
   limits?: Partial<Record<keyof typeof LIMITS, number>>;
   /** 日志只记 ID 与状态（AGENTS.md 硬规则 9）。 */
@@ -146,18 +155,23 @@ export function createApp(deps: AppDeps) {
     return c.json({ owner_id: o.id, display_name: o.displayName, timezone: o.timezone });
   });
 
-  if (deps.chat) mountConversationRoutes(app, deps.chat, limiter, deps.limits);
+  const hub = deps.hub ?? new EventHub();
+  if (deps.chat) mountConversationRoutes(app, deps, deps.chat, limiter);
+  mountGlobalStream(app, deps, hub);
 
-  return { app, auth, limiter };
+  return { app, auth, limiter, hub };
 }
 
 function mountConversationRoutes(
   app: Hono<AppEnv>,
+  deps: AppDeps,
   chat: NonNullable<AppDeps["chat"]>,
   limiter: RateLimiter,
-  limits?: AppDeps["limits"],
 ) {
-  const { conversations, ingress } = chat;
+  const limits = deps.limits;
+  const { conversations, ingress, runtime } = chat;
+  const throttleMs = deps.sse?.throttleMs ?? 100;
+  const keepAliveMs = deps.sse?.keepAliveMs ?? 15_000;
   const present = (c: { id: string; title: string; createdAt: number; lastActiveAt: number; archived: boolean }) => ({
     id: c.id,
     title: c.title,
@@ -204,6 +218,47 @@ function mountConversationRoutes(
     );
   });
 
+  // 加载更早的条目（06 §3）：before 不含；缺省从最新开始
+  app.get("/v1/conversations/:id/entries", async (c) => {
+    const conv = await conversations.get(c.get("owner").id, c.req.param("id"));
+    const before = c.req.query("before");
+    if (before !== undefined && !/^\d+$/.test(before)) {
+      throw new AppError("invalid_request", "before 必须是条目 ID", { issues: [{ path: "before" }] });
+    }
+    const limitQ = c.req.query("limit");
+    const limit = limitQ === undefined ? 50 : Number(limitQ);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new AppError("invalid_request", "limit 需为 1–100 的整数", { issues: [{ path: "limit" }] });
+    }
+    const page = await runtime.loadEarlier(conv.piConversationId, before, limit);
+    return c.json({ entries: page.entries.map(presentEntry), has_earlier: page.hasEarlier });
+  });
+
+  // 会话流（06 §9.1）：每次提交推送一次完整快照，100 ms 节流；Last-Event-ID 续传
+  app.get("/v1/conversations/:id/stream", async (c) => {
+    const conv = await conversations.get(c.get("owner").id, c.req.param("id")); // 不属于自己 → 404，不开流
+    const lastId = c.req.header("Last-Event-ID");
+    const from = lastId !== undefined && /^\d+$/.test(lastId) ? lastId : undefined; // 无效游标 → 最新窗口
+    return streamSSE(c, async (stream) => {
+      let observer: Awaited<ReturnType<RuntimePort["observe"]>> | undefined;
+      let chain: Promise<void> = Promise.resolve();
+      const throttle = latestThrottle<ConversationSnapshot>(deps.clock, throttleMs, (snap) => {
+        chain = chain.then(() =>
+          stream
+            .writeSSE({ event: "snapshot", ...(snap.cursor !== undefined ? { id: snap.cursor } : {}), data: JSON.stringify(presentSnapshot(snap)) })
+            .catch(() => {}),
+        );
+      });
+      try {
+        observer = await runtime.observe(conv.piConversationId, from, (s) => throttle.push(s));
+        await holdOpen(stream, deps.clock, keepAliveMs);
+      } finally {
+        throttle.close();
+        await observer?.stop();
+      }
+    });
+  });
+
   app.post("/v1/conversations/:id/continue", async (c) => {
     const r = await ingress.continue(c.get("owner").id, c.req.param("id"));
     return c.json({ submission_id: r.submissionId }, 202);
@@ -211,6 +266,54 @@ function mountConversationRoutes(
 
   app.post("/v1/conversations/:id/abort", async (c) => {
     return c.json(await ingress.abort(c.get("owner").id, c.req.param("id")));
+  });
+}
+
+/** 保持连接直到客户端断开，期间每 keepAliveMs 发一次注释行。 */
+function holdOpen(stream: SSEStreamingApi, clock: Clock, keepAliveMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let cancel: (() => void) | undefined;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      cancel?.();
+      resolve();
+    };
+    const tick = () => {
+      if (done) return;
+      stream.write(": keep-alive\n\n").then(
+        () => {
+          if (!done) cancel = clock.setTimer(tick, keepAliveMs);
+        },
+        finish,
+      );
+    };
+    stream.onAbort(finish);
+    cancel = clock.setTimer(tick, keepAliveMs);
+  });
+}
+
+/** 全局流（06 §9.2）：runtime / notification / job / unread，按 owner 过滤。 */
+function mountGlobalStream(app: Hono<AppEnv>, deps: AppDeps, hub: EventHub) {
+  const keepAliveMs = deps.sse?.keepAliveMs ?? 15_000;
+  app.get("/v1/stream", (c) => {
+    const owner = c.get("owner");
+    return streamSSE(c, async (stream) => {
+      let chain: Promise<void> = Promise.resolve();
+      const send = (event: string, data: unknown) => {
+        chain = chain.then(() => stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {}));
+      };
+      send("runtime", { status: deps.isHealthy && !deps.isHealthy() ? "failed" : "ok" });
+      const unsubscribe = hub.subscribe((e) => {
+        if (e.ownerId === "*" || e.ownerId === owner.id) send(e.event, e.data);
+      });
+      try {
+        await holdOpen(stream, deps.clock, keepAliveMs);
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 }
 

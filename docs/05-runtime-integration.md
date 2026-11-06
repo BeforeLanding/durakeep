@@ -202,13 +202,14 @@ export interface RuntimePort {
   abort(conv: string): Promise<void>;
   observe(conv: string, from: ResumeCursor | undefined,
           listener: (snap: ConversationSnapshot) => void): Promise<{ stop(): Promise<void>; cursor(): ResumeCursor }>;
-  loadEarlier(conv: string, beforeEntryId: string, limit: number): Promise<AppEntry[]>;
+  loadEarlier(conv: string, beforeEntryId: string | undefined, limit: number): Promise<{ entries: AppEntry[]; hasEarlier: boolean }>; // before 不含；缺省从最新开始；升序返回至多 limit 条可展示条目
   usage(): Promise<UsageSummary>;
   backupInto(path: string): Promise<void>;   // 通过共享队列执行 VACUUM INTO
   close(): Promise<void>;
 }
 
 export type ConversationSnapshot = {
+  cursor?: string;                           // 此刻的恢复游标（= SSE 的 id）；空会话为 undefined
   entries: AppEntry[];                       // 已经转换成应用视图：user / assistant / tool / event / compaction
   live: {
     running: boolean;
@@ -223,7 +224,7 @@ export type ConversationSnapshot = {
 
 `AppEntry` 的转换规则：`app.user` → user；`pi.assistant` → assistant（解析 `<citations>`，交给 knowledge 包校验）；`pi.tool-result` → tool（只保留名称、成败和摘要）；`app.reminder_fired` → event；`pi.compaction` → 一条“较早的对话已压缩”的分隔线；`pi.system` 不展示。
 
-内部实现：`conversation.watch()` 配合 `ConversationTranscript.merge()`；`observe` 的 `from` 对应 `transcript.resume`。**1.5.0 实测**：`Submission.wait()` 返回的 `answer` 是助手条目的 **ID**（数字），取回答文本要再用 `conversation.entries({ minEntryId, maxEntryId })` 读出该条目；`pi.live` 里的 `tools` 是数组，部分回答在 `generation.message`，排队数量在 `pi.inbox.items`。`PiRuntime.loadEarlier` 留到 T-12。
+内部实现：`conversation.watch()` 配合 `ConversationTranscript.merge()`；`observe` 的 `from` 对应 `transcript.resume`。**1.5.0 实测**：`Submission.wait()` 返回的 `answer` 是助手条目的 **ID**（数字），取回答文本要再用 `conversation.entries({ minEntryId, maxEntryId })` 读出该条目；`pi.live` 里的 `tools` 是数组，部分回答在 `generation.message`，排队数量在 `pi.inbox.items`。`loadEarlier` 用 `conversation.entries({ maxEntryId: before - 1, order: "descending" })` 逐页向前扫描：条目 ID 有空洞，且 `pi.system` 等不展示，所以要扫到凑够 `limit` 条可展示条目为止。观察者的 `snapshot.entries` 是**该连接已知的全部条目**；用 `from` 重连时只含游标之后的条目。
 
 ## 8. 后台会话（ADR-10，P2）
 

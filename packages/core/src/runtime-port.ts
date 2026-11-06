@@ -25,6 +25,8 @@ export type AppEntry =
   | { id: string; kind: "compaction" };
 
 export type ConversationSnapshot = {
+  /** 此刻的恢复游标（SSE 的 id）；传回 observe 的 from 即可只补发之后的条目。空会话为 undefined。 */
+  cursor?: ResumeCursor;
   entries: AppEntry[];
   live: {
     running: boolean;
@@ -73,7 +75,12 @@ export interface RuntimePort {
     from: ResumeCursor | undefined,
     listener: (snap: ConversationSnapshot) => void,
   ): Promise<{ stop(): Promise<void>; cursor(): ResumeCursor | undefined }>;
-  loadEarlier(conv: string, beforeEntryId: string, limit: number): Promise<AppEntry[]>;
+  /** 加载比 beforeEntryId（不含）更早的条目，升序返回至多 limit 条可展示的条目；before 缺省 = 从最新开始。 */
+  loadEarlier(
+    conv: string,
+    beforeEntryId: string | undefined,
+    limit: number,
+  ): Promise<{ entries: AppEntry[]; hasEarlier: boolean }>;
   usage(): Promise<UsageSummary>;
   backupInto(path: string): Promise<void>;
   close(): Promise<void>;

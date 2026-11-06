@@ -82,6 +82,12 @@
 - 意外 / 偏离设计：①04 的 app_ingress_events 没存原文，崩溃后恢复扫描无法“用原 requestId 重新提交”；加了 payload_json 列，派发成功后置 NULL（正文不在业务库重复保存）。②payload_hash 加入会话 ID，否则 R10（同 ID 发往不同会话）挡不住。③04 的 app_operations DDL 与 T-04 的实现不一致（PK 为 (owner_id, op_key)，无 conversation_id），按实现改了文档。④steer 在无工具轮的 run 里不单独产生回答（见 05 §12）。⑤03 的代码布局里没有承载会话 / 入口的包，新增 packages/conversations 并写回 03。⑥GET /entries 与 SSE 属于 T-12，本卡未做。⑦main.ts 在 dev 模式下没有被运行过（会走真实 provider），只在 test 模式下测了；dev 的模型 ID deepseek-flash 仅离线核对过存在于 pi-ai 目录。
 - 对文档的修改：03 §2；04（ingress 两列、operations）；05 §7 与 §12；06 §3。
 
+## 2026-11-06 T-12 SSE 与快照转换
+- 改动：apps/server：会话流 GET /v1/conversations/:id/stream（每次提交推送完整快照，100 ms 尾部节流，15 s keep-alive，Last-Event-ID 续传）、GET /v1/conversations/:id/entries（向前分页）、全局流 GET /v1/stream（先报 runtime 状态，按 owner 投递 hub 事件）、present.ts（内部 AppEntry → 线格式，run 失败的中文原因）、hub.ts（EventHub）、throttle.ts；core：ConversationSnapshot 增加 cursor，RuntimePort.loadEarlier 改为返回 { entries, hasEarlier }；runtime-pi：loadEarlier 实现（逐页向前扫描凑够可展示条目）；main.ts 把运行时失效发布到全局流。
+- 测试：tests/int/stream.test.ts 9 个用例（共跑 4 轮全过，首轮有 5 个失败，均为测试自身问题，见下）：流式推进（响应头、初始快照、生成中的 partialText、最终条目只含 user / assistant、快照数 ≤ 用时 / 100 ms + 余量；实测一次约 1.1 s 的回答收到 8 个快照）；**断线重连只补发缺失条目**（断线期间两轮对话，用 Last-Event-ID 重连后快照恰为 4 条缺失条目，没有第一轮的；游标指向最新则为空）；无效 / 超前游标；未登录 401、别人的或不存在的会话 404 不开流；keep-alive 与观察者释放（含多连接独立）；model_error 带中文原因；条目分页（7 轮对话每页 4 条走完 4 页，无重复无遗漏，升序）；全局流按 owner 过滤、runtime 失效可见；真实 socket 上的 SSE 帧格式、续传、客户端取消后约 35 ms 释放观察者。apps/server 的单测（throttle、password）。最终完整运行：pnpm lint 通过；pnpm test 21 文件 69 用例；pnpm test:recovery 4 文件 9 用例。无真实模型调用。
+- 意外 / 偏离设计：①发现 vitest 的 unit 项目只收 packages/*，T-10 写的 apps/server/src/password.test.ts 一直没被运行；已把 apps/* 加入 include，补跑通过（本该在 T-10 发现）。②测试首轮失败的原因：用 Object.create(runtime) 包装 PiRuntime 会因私有字段而抛 TypeError（改用 Proxy）；观察者计数器没在 setup 里清零；faux 流速太快看不到 partialText。③重连后快照 entries 只含错过的条目（不是全量），客户端必须按 id 合并；06 已写明。④助手 / 工具条目没有时间戳，AppEntry 的 at 只有用户条目有，06 示例已改。⑤引用校验（citations / valid）未做，属 T-16；全局流里的 notification / job / unread 事件只有通道，没有生产者（后续任务接入）。⑥真实 socket 用例中 server.close 要等 fetch 的空闲连接约 4 s，不是实现问题。
+- 对文档的修改：05 §7（loadEarlier 签名、snapshot.cursor、条目扫描说明）、06 §3（entries 响应、事件条目形状）、06 §9（游标语义、无效游标、runFailure 文案、at 说明）。
+
 ---
 
 ## 2026-11-06 开发前文档 v1

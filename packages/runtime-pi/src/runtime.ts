@@ -156,7 +156,13 @@ export class PiRuntime implements RuntimePort {
           if (e) entries.push(e);
         }
       }
-      listener({ entries, live: toSnapshotLive(merged.docs as Record<string, unknown>), hasEarlier });
+      const resume = transcript.resume?.from;
+      listener({
+        ...(resume !== undefined ? { cursor: String(resume) } : {}),
+        entries,
+        live: toSnapshotLive(merged.docs as Record<string, unknown>),
+        hasEarlier,
+      });
     };
     emit(watch.value);
     watch.start(async (call) => {
@@ -171,8 +177,36 @@ export class PiRuntime implements RuntimePort {
     };
   }
 
-  async loadEarlier(_conv: string, _beforeEntryId: string, _limit: number): Promise<AppEntry[]> {
-    throw new Error("loadEarlier 尚未实现（T-12）");
+  async loadEarlier(conv: string, beforeEntryId: string | undefined, limit: number) {
+    const c = await this.#conv(conv);
+    const before = beforeEntryId === undefined ? undefined : Number(beforeEntryId);
+    if (before !== undefined && !Number.isInteger(before)) throw new Error("beforeEntryId 无效");
+    const out: AppEntry[] = [];
+    let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
+    let hasEarlier = false;
+    // 条目 ID 有空洞，且 pi.system 等不展示：逐页向前扫描，直到凑够 limit 条可展示的条目
+    for (;;) {
+      const page = await c.entries(
+        cursor === undefined
+          ? { ...(before !== undefined ? { maxEntryId: (before - 1) as never } : {}), order: "descending" as const }
+          : { order: "descending" as const },
+        Math.max(limit, 20),
+        cursor,
+        context,
+      );
+      for (const item of page.items) {
+        const e = toAppEntry(item as unknown as PiEntryLike);
+        if (!e) continue;
+        if (out.length === limit) {
+          hasEarlier = true; // 还有可展示的更早条目
+          break;
+        }
+        out.push(e);
+      }
+      if (hasEarlier || page.next === undefined) break;
+      cursor = page.next;
+    }
+    return { entries: out.reverse(), hasEarlier };
   }
 
   async usage(): Promise<UsageSummary> {
