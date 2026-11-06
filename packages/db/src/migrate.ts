@@ -146,6 +146,28 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_jobs_ready ON app_jobs(status, next_attempt_at) WHERE status = 'queued';
     `,
   },
+  {
+    id: 6,
+    sql: `
+      CREATE TABLE app_chunks (
+        id             INTEGER PRIMARY KEY,
+        version_id     TEXT NOT NULL REFERENCES app_document_versions(id),
+        document_id    TEXT NOT NULL,
+        owner_id       TEXT NOT NULL,
+        ordinal        INTEGER NOT NULL,
+        heading_path   TEXT NOT NULL DEFAULT '',
+        char_start     INTEGER NOT NULL,
+        char_end       INTEGER NOT NULL,
+        text           TEXT NOT NULL,
+        token_estimate INTEGER NOT NULL,
+        active         INTEGER NOT NULL DEFAULT 1,
+        UNIQUE (version_id, ordinal)
+      );
+      CREATE INDEX app_chunks_doc ON app_chunks(owner_id, document_id, active);
+      CREATE VIRTUAL TABLE app_chunks_fts USING fts5(seg_text, heading_seg, tokenize = 'unicode61 remove_diacritics 2');
+      CREATE VIRTUAL TABLE app_chunks_tri USING fts5(text, tokenize = 'trigram');
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

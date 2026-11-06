@@ -18,6 +18,8 @@ import {
   type VersionRow,
 } from "./documents.ts";
 import { extractHtml, extractPlain, type Extracted } from "./extract.ts";
+import { setActiveChunks } from "./indexer.ts";
+import { CHUNKER_VERSION } from "./chunker.ts";
 import { assertRobotsAllows, safeFetch, type FetchPolicy } from "./fetch.ts";
 import { normalizeUrl, urlHash } from "./url.ts";
 
@@ -201,7 +203,7 @@ export class KnowledgeService {
     return getDocument(this.#d.db, ownerId, id);
   }
 
-  /** 停止使用（FR-KB-08，立即生效、可撤销）。chunks.active 的联动在 T-14 加入。 */
+  /** 停止使用（FR-KB-08，立即生效、可撤销）：同一个事务里把该资料所有片段置为不可检索。 */
   async revoke(ownerId: string, id: string): Promise<DocumentRow> {
     return this.#transition(ownerId, id, "ready", "revoked");
   }
@@ -215,6 +217,7 @@ export class KnowledgeService {
       if (cur.status === to) return cur; // 幂等
       if (cur.status !== from) throw new AppError("invalid_request", `当前状态（${cur.status}）不能${to === "revoked" ? "停止使用" : "恢复"}`);
       await tx.run("UPDATE app_documents SET status = ?, revoked_at = ?, updated_at = ? WHERE owner_id = ? AND id = ?", to, to === "revoked" ? now : null, now, ownerId, id);
+      await setActiveChunks(tx, ownerId, id, cur.currentVersionId, to === "ready"); // 立即生效：同一个事务里翻转片段的 active
       return getDocument(tx, ownerId, id);
     });
   }
@@ -305,7 +308,16 @@ export class KnowledgeService {
 
       // 阶段 4：索引（T-14），然后 ready
       const text = this.#d.blobs.getText(textHash!);
-      await this.#d.indexer?.({ ownerId, documentId: doc.id, versionId, text });
+      if (this.#d.indexer) {
+        await this.#d.indexer({ ownerId, documentId: doc.id, versionId, text });
+        await this.#d.db.run(
+          "UPDATE app_document_versions SET parser_version = parser_version || ? WHERE owner_id = ? AND id = ? AND parser_version NOT LIKE ?",
+          `+${CHUNKER_VERSION}`,
+          ownerId,
+          versionId,
+          `%+${CHUNKER_VERSION}`,
+        );
+      }
       const finalVersion = (await getVersion(this.#d.db, ownerId, versionId))!;
       await this.#finish(ownerId, doc, finalVersion, ex?.title ?? finalVersion.title ?? undefined);
     } catch (e) {
@@ -350,6 +362,7 @@ export class KnowledgeService {
         ownerId,
         doc.id,
       );
+      await setActiveChunks(tx, ownerId, doc.id, version.id, status !== "revoked");
     });
   }
 

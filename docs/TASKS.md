@@ -15,7 +15,7 @@ P0 | T-01 Pi 最小链路与故障注入框架 | done | |
 | P1 | T-11 会话与入口 | done | R1、R9、R10、FR-CHAT-03/04/05 通过 | |
 | P1 | T-12 SSE 与快照转换 | done | 断线重连只补发缺失条目 | |
 | P1 | T-13 采集 | done | S6–S9、S12、R13 通过；10 页质量检查见 spikes/T13-extraction-check.md |
-| P1 | T-14 分块、分词、FTS | todo | |
+| P1 | T-14 分块、分词、FTS | done | 不变式 2 有测试；1 万片段 p95 约 84–114 ms |
 | P1 | T-15 检索与知识工具 | todo | |
 | P1 | T-16 引用解析与校验 | todo | |
 | P1 | T-17 检索评测集与脚本 | todo | 需要用户提供资料 |

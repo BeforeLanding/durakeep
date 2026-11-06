@@ -4,7 +4,7 @@ import { ConversationService, IngressService } from "@durakeep/conversations";
 import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { JobWorker } from "@durakeep/jobs";
-import { BlobStore, isPublicIp, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
+import { BlobStore, createChunkIndexer, isPublicIp, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
 import { demoFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -71,6 +71,7 @@ const knowledge = new KnowledgeService({
   blobs: new BlobStore(resolve(dataDir, "blobs")),
   clock: systemClock,
   fetchPolicy,
+  indexer: createChunkIndexer(db),
   log,
   wake: () => worker.wake(), // worker 在下面创建；wake 只会在它创建之后被调用
 });

@@ -360,7 +360,7 @@ queued|running → cancelled（用户取消；正在运行的阶段执行完后�
 ## 5. 不变式（测试中断言）
 
 1. 每个 `confirmed` 记忆的 `(owner_id, scope, key)` 唯一（由部分唯一索引保证）。
-2. 对于任意 `app_chunks.id = r`，当 `active=1` 时 `app_chunks_fts` 和 `app_chunks_tri` 中都存在 rowid 为 r 的行；`purged` 之后两张表中都不存在。
+2. 对于任意 `app_chunks.id = r`，当 `active=1` 时 `app_chunks_fts` 和 `app_chunks_tri` 中都存在 rowid 为 r 的行；`purged` 之后两张表中都不存在。实现上更强：**无论 `active` 是 0 还是 1，块与两张 FTS 表的行始终一一对应**（同一个事务里成对写入、成对删除；没有孤儿行）。`active` 只决定能不能被检索：半成品的版本、旧版本、被停止使用的资料的块都是 `active=0`，但 FTS 行都在。
 3. `app_occurrences` 的 `(schedule_id, revision, fire_at)` 唯一，因此在线时一个提醒只通知一次。
 4. `app_ingress_events.status='dispatched'` 时，`submission_id` 不能为 NULL。
 5. 任何 `app_*` 查询都带有 `owner_id` 条件；仓储层的方法签名强制要求传入 `OwnerId` 类型的参数。

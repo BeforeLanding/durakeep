@@ -15,3 +15,7 @@ export {
   type Indexer,
   type KnowledgeDeps,
 } from "./knowledge.ts";
+export { chunkMarkdown, estimateTokens, CHUNKER_VERSION, type Chunk } from "./chunker.ts";
+export { segment, segmentForIndex, buildMatchQuery, substringQuery, STOPWORDS } from "./segment.ts";
+export { createChunkIndexer, deleteVersionChunks, setActiveChunks } from "./indexer.ts";
+export { searchLexical, searchSubstring, type Hit, type SearchOptions } from "./search.ts";
