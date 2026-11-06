@@ -1,5 +1,5 @@
 import { AppError, fault, type Clock, type Json } from "@durakeep/core";
-import { onceStrict, type SqlDatabase } from "@durakeep/db";
+import { onceStrict, type SqlDatabase, type SqlExecutor } from "@durakeep/db";
 import { enqueue, JobError, type JobContext, type JobHandler, type JobKind, type JobRow } from "@durakeep/jobs";
 import type { BlobStore } from "./blob.ts";
 import { decodeBody } from "./charset.ts";
@@ -45,6 +45,9 @@ export type KnowledgeDeps = {
 };
 
 export type CaptureResult = { documentId: string; jobId: string | null; status: "pending" | "ready" | "revoked" | "failed"; deduplicated: boolean };
+
+/** 一次写入的计划：args 用于幂等键与冲突检测；run 在调用方的事务里执行。 */
+export type CapturePlan = { args: Json; run: (tx: SqlExecutor) => Promise<CaptureResult> };
 
 export type CaptureTextInput = {
   clientRequestId: string;
@@ -94,63 +97,86 @@ export class KnowledgeService {
 
   // ---- 采集 ----------------------------------------------------------------
 
-  /** 文本 / Markdown。原始字节先写 blob（内容寻址，重复写入无害），然后一个事务里完成：去重 → 资料 + 版本 + 作业。 */
-  async captureText(ownerId: string, input: CaptureTextInput): Promise<CaptureResult> {
-    const crid = requireRequestId(input.clientRequestId);
+  /** 文本 / Markdown 的校验与准备：校验入参、原始字节写 blob（内容寻址，重复写入无害）；返回幂等用的规范化参数和事务内的写入函数。 */
+  planCaptureText(ownerId: string, input: { kind: "text" | "markdown"; title?: string; text: unknown; tags?: unknown }): CapturePlan {
     if (typeof input.text !== "string" || input.text.trim() === "") {
       throw new AppError("invalid_request", "text 不能为空", { issues: [{ path: "text" }] });
     }
-    if (Array.from(input.text).length > MAX_TEXT_CHARS) throw new AppError("too_large", `正文不能超过 ${MAX_TEXT_CHARS} 个字符`);
+    const text: string = input.text;
+    if (Array.from(text).length > MAX_TEXT_CHARS) throw new AppError("too_large", `正文不能超过 ${MAX_TEXT_CHARS} 个字符`);
     const tags = normalizeTags(input.tags);
-    const title = cleanTitle(input.title) ?? defaultTitle(input.text, input.kind);
-    const raw = Buffer.from(input.text, "utf8");
-    const hash = this.#d.blobs.put(raw);
+    const userTitle = cleanTitle(input.title);
+    const title = userTitle ?? defaultTitle(text, input.kind);
+    const hash = this.#d.blobs.put(Buffer.from(text, "utf8"));
     const now = this.#d.clock.now();
+    const args: Json = { type: input.kind, title: userTitle ?? null, hash, tags };
+    return {
+      args,
+      run: async (tx) => {
+        const dup = await findTextDuplicate(tx, ownerId, hash);
+        if (dup) return { documentId: dup.id, jobId: null, status: dup.status as CaptureResult["status"], deduplicated: true };
+        const doc = await insertDocument(tx, now, { ownerId, sourceType: input.kind, sourceUri: null, title, tags });
+        await insertVersion(tx, now, { documentId: doc.id, ownerId, contentHash: hash, rawBlob: hash, parserVersion: "pending" });
+        const { job } = await enqueue(tx, now, { ownerId, kind: "ingest_text", dedupeKey: `ingest_text:${doc.id}`, input: { documentId: doc.id, kind: input.kind } });
+        return { documentId: doc.id, jobId: job.id, status: "pending" as const, deduplicated: false };
+      },
+    };
+  }
 
-    const args: Json = { type: input.kind, title: cleanTitle(input.title) ?? null, hash, tags };
-    const r = await onceStrict(this.#d.db, ownerId, `http:capture:${crid}`, "capture", args, async (tx) => {
-      const dup = await findTextDuplicate(tx, ownerId, hash);
-      if (dup) return { documentId: dup.id, jobId: null, status: dup.status as CaptureResult["status"], deduplicated: true };
-      const doc = await insertDocument(tx, now, { ownerId, sourceType: input.kind, sourceUri: null, title, tags });
-      await insertVersion(tx, now, { documentId: doc.id, ownerId, contentHash: hash, rawBlob: hash, parserVersion: "pending" });
-      const { job } = await enqueue(tx, now, { ownerId, kind: "ingest_text", dedupeKey: `ingest_text:${doc.id}`, input: { documentId: doc.id, kind: input.kind } });
-      return { documentId: doc.id, jobId: job.id, status: "pending" as const, deduplicated: false };
-    });
+  /** 文本 / Markdown（HTTP）：请求级幂等 + 上面的写入，在同一个事务里。 */
+  async captureText(ownerId: string, input: CaptureTextInput): Promise<CaptureResult> {
+    const crid = requireRequestId(input.clientRequestId);
+    const plan = this.planCaptureText(ownerId, input);
+    const r = await onceStrict(this.#d.db, ownerId, `http:capture:${crid}`, "capture", plan.args, plan.run);
     this.#d.wake?.();
     return { ...r.result, deduplicated: r.deduplicated || r.result.deduplicated };
   }
 
-  /** URL：规范化 → 资料（同一 owner 同一 URL 只有一份）+ 作业（同一 URL 同一天只有一个）。抓取在作业里进行。 */
-  async captureUrl(ownerId: string, input: CaptureUrlInput): Promise<CaptureResult> {
-    const crid = requireRequestId(input.clientRequestId);
+  /** URL 的校验与准备：规范化；返回幂等用的规范化参数和事务内的写入函数（资料 + 作业）。 */
+  planCaptureUrl(ownerId: string, input: { url: unknown; tags?: unknown }): CapturePlan {
     if (typeof input.url !== "string") throw new AppError("invalid_request", "url 必须是字符串", { issues: [{ path: "url" }] });
     const url = normalizeUrl(input.url);
     const tags = normalizeTags(input.tags);
     const now = this.#d.clock.now();
     const args: Json = { type: "url", url, tags };
-    const r = await onceStrict(this.#d.db, ownerId, `http:capture:${crid}`, "capture", args, async (tx) => {
-      let doc = await findDocumentByUri(tx, ownerId, url);
-      if (doc && (doc.status === "revoked" || doc.status === "purging" || doc.status === "purged")) {
-        throw new AppError("invalid_request", doc.status === "revoked" ? "这篇资料已停止使用，请先恢复再重新采集" : "这篇资料正在被删除");
-      }
-      if (!doc) doc = await insertDocument(tx, now, { ownerId, sourceType: "url", sourceUri: url, title: url, tags });
-      else if (tags.length > 0) {
-        await tx.run("UPDATE app_documents SET tags_json = ?, updated_at = ? WHERE owner_id = ? AND id = ?", JSON.stringify(tags), now, ownerId, doc.id);
-      }
-      const { job, created } = await enqueue(tx, now, {
-        ownerId,
-        kind: "ingest_url",
-        dedupeKey: `ingest_url:${urlHash(url)}:${dayKey(now)}`,
-        input: { documentId: doc.id, url },
-      });
-      if (created && doc.status === "failed") {
-        await tx.run("UPDATE app_documents SET status = 'pending', error_code = NULL, updated_at = ? WHERE owner_id = ? AND id = ?", now, ownerId, doc.id);
-        doc = { ...doc, status: "pending" };
-      }
-      return { documentId: doc.id, jobId: job.id, status: doc.status as CaptureResult["status"], deduplicated: !created };
-    });
+    return {
+      args,
+      run: async (tx) => {
+        let doc = await findDocumentByUri(tx, ownerId, url);
+        if (doc && (doc.status === "revoked" || doc.status === "purging" || doc.status === "purged")) {
+          throw new AppError("invalid_request", doc.status === "revoked" ? "这篇资料已停止使用，请先恢复再重新采集" : "这篇资料正在被删除");
+        }
+        if (!doc) doc = await insertDocument(tx, now, { ownerId, sourceType: "url", sourceUri: url, title: url, tags });
+        else if (tags.length > 0) {
+          await tx.run("UPDATE app_documents SET tags_json = ?, updated_at = ? WHERE owner_id = ? AND id = ?", JSON.stringify(tags), now, ownerId, doc.id);
+        }
+        const { job, created } = await enqueue(tx, now, {
+          ownerId,
+          kind: "ingest_url",
+          dedupeKey: `ingest_url:${urlHash(url)}:${dayKey(now)}`,
+          input: { documentId: doc.id, url },
+        });
+        if (created && doc.status === "failed") {
+          await tx.run("UPDATE app_documents SET status = 'pending', error_code = NULL, updated_at = ? WHERE owner_id = ? AND id = ?", now, ownerId, doc.id);
+          doc = { ...doc, status: "pending" };
+        }
+        return { documentId: doc.id, jobId: job.id, status: doc.status as CaptureResult["status"], deduplicated: !created };
+      },
+    };
+  }
+
+  /** URL（HTTP）：请求级幂等 + 上面的写入。抓取在作业里进行。 */
+  async captureUrl(ownerId: string, input: CaptureUrlInput): Promise<CaptureResult> {
+    const crid = requireRequestId(input.clientRequestId);
+    const plan = this.planCaptureUrl(ownerId, input);
+    const r = await onceStrict(this.#d.db, ownerId, `http:capture:${crid}`, "capture", plan.args, plan.run);
     this.#d.wake?.();
     return { ...r.result, deduplicated: r.deduplicated || r.result.deduplicated };
+  }
+
+  /** 入队后唤醒作业队列（写工具在事务提交之后调用）。 */
+  wake(): void {
+    this.#d.wake?.();
   }
 
   // ---- 查询与状态 ------------------------------------------------------------

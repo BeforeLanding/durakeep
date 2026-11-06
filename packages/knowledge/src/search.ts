@@ -9,29 +9,36 @@ export type Hit = {
   versionId: string;
   ordinal: number;
   headingPath: string;
+  charStart: number;
+  charEnd: number;
   text: string;
   /** FTS5 的 bm25 值：越小（越负）越相关。 */
   score: number;
 };
 
-type Row = { id: number; document_id: string; version_id: string; ordinal: number; heading_path: string; text: string; score: number };
-const toHit = (r: Row): Hit => ({ chunkId: r.id, documentId: r.document_id, versionId: r.version_id, ordinal: r.ordinal, headingPath: r.heading_path, text: r.text, score: r.score });
+type Row = { id: number; document_id: string; version_id: string; ordinal: number; heading_path: string; char_start: number; char_end: number; text: string; score: number };
+const toHit = (r: Row): Hit => ({ chunkId: r.id, documentId: r.document_id, versionId: r.version_id, ordinal: r.ordinal, headingPath: r.heading_path, charStart: r.char_start, charEnd: r.char_end, text: r.text, score: r.score });
 
-export type SearchOptions = { limit?: number; tag?: string };
+/** tag：单个标签；tags：多个标签，资料带有其中任意一个即可。两者可同时给，取并集。 */
+export type SearchOptions = { limit?: number; tag?: string; tags?: string[] };
 
-const TAG_FILTER =
-  "AND EXISTS (SELECT 1 FROM app_documents d, json_each(d.tags_json) j WHERE d.id = c.document_id AND d.owner_id = c.owner_id AND j.value = ?)";
+function tagArgs(o: SearchOptions): string[] {
+  return [...new Set([...(o.tag ? [o.tag] : []), ...(o.tags ?? [])])];
+}
+
+const tagFilter = (n: number) =>
+  `AND EXISTS (SELECT 1 FROM app_documents d, json_each(d.tags_json) j WHERE d.id = c.document_id AND d.owner_id = c.owner_id AND j.value IN (${Array(n).fill("?").join(",")}))`;
 
 /** 词法路：分词后在 app_chunks_fts 上用 bm25（标题列权重 2）排序。查询里一个词也没有时返回空。 */
 export async function searchLexical(db: SqlExecutor, ownerId: string, query: string, opts: SearchOptions = {}): Promise<Hit[]> {
   const match = buildMatchQuery(segment(query));
   if (!match) return [];
   const rows = await db.all<Row>(
-    `SELECT c.id, c.document_id, c.version_id, c.ordinal, c.heading_path, c.text, bm25(app_chunks_fts, 1.0, 2.0) AS score
+    `SELECT c.id, c.document_id, c.version_id, c.ordinal, c.heading_path, c.char_start, c.char_end, c.text, bm25(app_chunks_fts, 1.0, 2.0) AS score
        FROM app_chunks_fts JOIN app_chunks c ON c.id = app_chunks_fts.rowid
-      WHERE app_chunks_fts MATCH ? AND c.owner_id = ? AND c.active = 1 ${opts.tag ? TAG_FILTER : ""}
+      WHERE app_chunks_fts MATCH ? AND c.owner_id = ? AND c.active = 1 ${tagArgs(opts).length ? tagFilter(tagArgs(opts).length) : ""}
       ORDER BY score LIMIT ?`,
-    ...(opts.tag ? [match, ownerId, opts.tag, opts.limit ?? 20] : [match, ownerId, opts.limit ?? 20]),
+    ...[match, ownerId, ...tagArgs(opts), opts.limit ?? 20],
   );
   return rows.map(toHit);
 }
@@ -41,11 +48,11 @@ export async function searchSubstring(db: SqlExecutor, ownerId: string, query: s
   const match = substringQuery(query);
   if (!match) return [];
   const rows = await db.all<Row>(
-    `SELECT c.id, c.document_id, c.version_id, c.ordinal, c.heading_path, c.text, bm25(app_chunks_tri) AS score
+    `SELECT c.id, c.document_id, c.version_id, c.ordinal, c.heading_path, c.char_start, c.char_end, c.text, bm25(app_chunks_tri) AS score
        FROM app_chunks_tri JOIN app_chunks c ON c.id = app_chunks_tri.rowid
-      WHERE app_chunks_tri MATCH ? AND c.owner_id = ? AND c.active = 1 ${opts.tag ? TAG_FILTER : ""}
+      WHERE app_chunks_tri MATCH ? AND c.owner_id = ? AND c.active = 1 ${tagArgs(opts).length ? tagFilter(tagArgs(opts).length) : ""}
       ORDER BY score LIMIT ?`,
-    ...(opts.tag ? [match, ownerId, opts.tag, opts.limit ?? 20] : [match, ownerId, opts.limit ?? 20]),
+    ...[match, ownerId, ...tagArgs(opts), opts.limit ?? 20],
   );
   return rows.map(toHit);
 }

@@ -15,6 +15,8 @@
 （登记发现但未处理的问题，等用户决定是否开新任务。）
 
 - guardDb 只能检测事务回调异步链内的误用；脱离异步上下文（如 setTimeout/事件回调里再调外层 db）抓不到。依赖 AGENTS.md 规则 6 与代码评审。（T-04）
+- 故障注入套件越来越慢（本地约 9 分钟，CI Windows 10 分钟以上）：每个用例 ×20 都要反复起子进程。目前不影响使用；如果影响迭代，可以考虑让 CI 里的重复次数可配置（本地 ×20、PR 上 ×5）。这会改变 08 §4“每个用例重复 20 次”的约定，需要你决定。（T-15）
+- kb_search 的词用 OR 连接，单字词会引入噪声；是否改成“至少命中 N 个词”要看 T-17 评测的精度数据。（T-15）
 - 检索质量（召回率）还没有任何评测：T-14 只验证了正确性与速度；ADR-06 的“Recall@10 ≥ 90%”要等 T-17 的评测集（需要用户提供资料）。（T-14）
 - 中文分词依赖 Intl.Segmenter（ICU）：不同 Node / ICU 版本的切词可能略有差异，升级 Node 后应重跑检索评测；索引时的分词结果不另存，版本不匹配时靠“重建索引”（P3）修复。（T-14）
 - 抽取质量只在 10 个页面上检查过：没有微信公众号转载、依赖 JS 渲染的页面、真实 GBK 站点的样本；MDN 的“上一页 / 下一页”导航行与 React 文档站的末尾 Sitemap 段会留在正文里。（T-13）
@@ -121,6 +123,19 @@
   ⑤“检索”只做了两路原始查询；RRF 融合、相邻去冗余、输出截断、kb_* 工具、GET /v1/search 与 /v1/chunks 都是 T-15 / T-16。
   ⑥首轮测试 5 个失败均为测试数据问题（样本文本太短、用了会命中“曲线”“内容”这类公共词的查询），不是实现缺陷；回归测试 R13（索引）一次通过。
 - 对文档的修改：07 §2（上限、重叠、写入、可检索性）、07 §3.1（停用词与 MATCH 转义）、07 §3.2（实测性能）、04 §5 不变式 2。
+
+## 2026-11-06 T-15 检索与知识工具
+- 改动：packages/knowledge：retrieval.ts（KnowledgeRetrieval：RRF 融合、相邻命中合并、<source> 渲染与转义、6000 字符截断、kb_get_source、kb_list_documents）、search.ts 增加字符区间与多标签（任一命中）；KnowledgeService 把“校验 + 写 blob”和“事务内写入”拆成 planCaptureText / planCaptureUrl（HTTP 路径与写工具共用，写工具才能放进 operations.once 的事务）、wake()；packages/conversations：ConversationDirectory / ConversationLookup（只依赖 db，按 Pi 会话 ID 找业务会话与 owner；避免启动时 ConversationService ↔ runtime 的循环依赖）；packages/runtime-pi：extensions/appCore.ts（静态系统提示，按已启用能力裁剪）、appKnowledge.ts（5 个工具：kb_search、kb_get_source、kb_list_documents 只读；kb_capture_text、kb_capture_url 写工具走 once() 与 run 锚点，replay: safe）、appGuard.ts（会话映射 + 工具白名单）、runAnchor.ts；runtime-pi 新增对 knowledge / conversations 的工作区依赖（03 §2 允许的方向）；main.ts 重排启动顺序并安装三个扩展。**没有新增第三方依赖。**
+- 测试（最终完整运行）：pnpm lint 通过；pnpm test 35 文件 186 用例通过；pnpm test:recovery 7 文件 14 用例通过。新增：retrieval 纯函数单测 5 个；tests/int/kb-tools.test.ts 15 个（RRF 同时包含词法路与子串路的命中；top_k 夹到 1–10；输出 ≤6000 字符并说明被截掉的条数；相邻合并后重叠只出现一次；**提示注入**：资料里的 </source> 与伪造的 <source> 被转义、标题里的引号不能跳出属性；无词 / 无命中给提示；owner 隔离、标签任一命中、停止使用的不出现；get_source 的 expand 与两端收窄、别人的 / 已停止使用的片段报错；list 只列可用与处理中；**经 Pi + faux 跑通“采集 → 检索 → 回答”**（kb_capture_text 收藏 → 作业完成 → kb_search 命中 → 回答带引用，tool-result 的 details.chunk_ids 与文本里的 chunk id 一致，模型拿到了结果，系统提示只含 kb 规则）；写工具幂等（同 run 重复、标题不同内容相同、新 run 再要求都指向同一份资料，资料 / 作业各 1 条）；kb_capture_url（规范化后同一 URL 去重、非法链接 / 带口令的链接返回错误结果）；AppGuard（没有业务会话 / 已归档的会话里工具被拒）；参数校验；系统提示静态且多次请求不追加 pi.system）。**写工具 R2 式崩溃测试 ×20**（tests/recovery/t15.test.ts，kb_capture_text 与 kb_capture_url 各 20 次：在 tool.after_business_commit 杀进程 → 重启重跑 → deduplicated=true，资料 / 作业 / 幂等记录各 1 条，模型只再被请求 1 次）。无真实模型调用。
+- 意外 / 偏离设计：
+  ①**Pi 在参数校验层就拒绝多余的 owner_id**（错误信息 owner_id: unknown field），比“忽略它”更强：模型无法传入 owner。首轮参数校验用例失败只是因为我的断言把“错误信息里回显的模型自己发的查询”当成了泄露。
+  ②循环依赖：ConversationService 依赖 runtime（创建 Pi 会话），而工具 / Guard 又要在 runtime 启动前就能按 Pi 会话 ID 查 owner。拆出只依赖 db 的 ConversationDirectory。
+  ③我先写的 main.ts 重写第一次被拒绝（文件在读取之后被改过），当时类型检查仍通过（旧文件仍然合法），差点漏掉；重新读取后写入，并确认三个扩展已安装。
+  ④OR 查询对单字词不友好（“金”会命中“钯金”和“铑金”）；测试里的独有词汇为此改成不共用字符。这是词法检索的已知代价，真实的召回 / 精度要等 T-17 评测。
+  ⑤合并后的结果只有一个 id：取得分最高的片段，同时在 chunks 属性里列出全部。T-16 要把 details.chunk_ids（全部片段）都算作“本次 run 出现过”，并且以 details 而不是输出文本为准——文本可能受资料内容影响。
+  ⑥kb_* 工具的“预期内失败”返回 isError 结果而不是抛异常；只有意料之外的错误才抛。
+  ⑦本地完整的故障注入套件现在要约 9 分钟（CI 的 Windows 约 10 分钟以上），随任务增多会继续变慢；见“已知缺口”。
+- 对文档的修改：05 §4.1（实现说明）、§5（工具目录的参数与返回、共同行为、<source> 的实际格式）；07 §3.2（实现与已知代价）。
 
 ---
 

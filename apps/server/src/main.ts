@@ -1,11 +1,11 @@
-// 进程入口（03 §3）：配置 → 实例锁 → 打开数据库 → 迁移 → 运行时 → 恢复扫描 → resume → HTTP。
+// 进程入口（03 §3）：配置 → 实例锁 → 打开数据库 → 迁移 → 知识库与作业队列 → 运行时（含工具）→ 恢复扫描 → resume → HTTP。
 // test / demo 模式只用 faux（零费用）；dev / prod 才构造真实 provider（需要 DEEPSEEK_API_KEY）。
-import { ConversationService, IngressService } from "@durakeep/conversations";
+import { ConversationDirectory, ConversationService, IngressService } from "@durakeep/conversations";
 import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { JobWorker } from "@durakeep/jobs";
-import { BlobStore, createChunkIndexer, isPublicIp, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
-import { demoFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
+import { BlobStore, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
+import { appCoreExtension, appGuardExtension, appKnowledgeExtension, demoFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { createApp, type LogEvent } from "./app.ts";
@@ -36,31 +36,8 @@ const raw = await openAppDatabase(resolve(dataDir, "app.sqlite"));
 const db = guardDb(raw);
 await migrate(db);
 
-let healthy = true;
-const useFaux = mode === "test" || mode === "demo";
-const pi = await startPi({
-  mode,
-  db: raw,
-  ...(useFaux ? { faux: demoFaux() } : {}),
-  onReport: (r) => log({ level: r.kind === "storage_failed" ? "error" : "warn", event: "pi.report", kind: r.kind }),
-  onFatal: (error) => {
-    // 03 §6：Harness 失效 → 停止接纳 → 记录 → 退出，由进程管理器拉起；重启后恢复
-    healthy = false;
-    hub.publish({ ownerId: "*", event: "runtime", data: { status: "failed" } });
-    log({ level: "error", event: "pi.fatal", error: (error as Error).name });
-    process.exit(3);
-  },
-});
-const runtime = new PiRuntime(pi, {
-  model: useFaux ? { provider: "faux", modelId: "faux-1" } : { provider: "deepseek", modelId: chatModel },
-});
-
-const conversations = new ConversationService(db, runtime, systemClock);
-const ingress = new IngressService(db, runtime, systemClock, conversations, log);
-await ingress.recover(); // 先重新派发已接纳未派发的输入
-runtime.resume(); // 再继续 Pi 里未完成的 run
-
 const hub = new EventHub();
+let healthy = true;
 
 // 采集（T-13）：blob 目录、知识服务、作业队列。抓取策略默认严格；
 // 只有 APP_MODE=test 且显式设置 FETCH_ALLOW_LOOPBACK=1 时才放开 127.0.0.1（进程级测试要抓取本机的测试站点）。
@@ -88,6 +65,33 @@ const worker = new JobWorker(db, systemClock, knowledge.handlers(), {
 });
 await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
 worker.start();
+
+// 运行时：扩展 = AppCore（静态系统提示）+ AppKnowledge（kb_* 工具）+ AppGuard（会话映射与白名单）
+const directory = new ConversationDirectory(db); // 只依赖 db：工具与 Guard 按 Pi 会话 ID 找 owner，不必等 ConversationService（它依赖 runtime）
+const retrieval = new KnowledgeRetrieval(db);
+const useFaux = mode === "test" || mode === "demo";
+const pi = await startPi({
+  mode,
+  db: raw,
+  ...(useFaux ? { faux: demoFaux() } : {}),
+  extensions: [appCoreExtension(), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appGuardExtension({ conversations: directory })],
+  onReport: (r) => log({ level: r.kind === "storage_failed" ? "error" : "warn", event: "pi.report", kind: r.kind }),
+  onFatal: (error) => {
+    // 03 §6：Harness 失效 → 停止接纳 → 记录 → 退出，由进程管理器拉起；重启后恢复
+    healthy = false;
+    hub.publish({ ownerId: "*", event: "runtime", data: { status: "failed" } });
+    log({ level: "error", event: "pi.fatal", error: (error as Error).name });
+    process.exit(3);
+  },
+});
+const runtime = new PiRuntime(pi, {
+  model: useFaux ? { provider: "faux", modelId: "faux-1" } : { provider: "deepseek", modelId: chatModel },
+});
+
+const conversations = new ConversationService(db, runtime, systemClock);
+const ingress = new IngressService(db, runtime, systemClock, conversations, log);
+await ingress.recover(); // 先重新派发已接纳未派发的输入
+runtime.resume(); // 再继续 Pi 里未完成的 run
 
 const { app } = createApp({
   db,

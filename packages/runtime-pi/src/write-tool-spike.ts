@@ -2,21 +2,12 @@
 import { normalizeText, opKey } from "@durakeep/core";
 import { guardDb, once, type SqlDatabase } from "@durakeep/db";
 import type { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
-import { defineExtension, defineTool, LiveDoc } from "@earendil-works/pi-durable";
+import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { runAnchor } from "./runAnchor.ts";
 import { fault } from "@durakeep/core";
 import { obj, str } from "@earendil-works/pi-schema";
 
-type AnchorApi = {
-  conversationId: string;
-  snapshot: (token: typeof LiveDoc, conversationId: string, ctx: never) => Promise<{ run?: { first?: string } } | undefined>;
-};
-
-/** run 锚点：当前 run 的第一个条目 ID；读不到返回 undefined（05 §5.2 的备选方案届时启用）。 */
-export async function runAnchor(api: unknown, ctx: unknown): Promise<string | undefined> {
-  const a = api as AnchorApi;
-  const live = await a.snapshot(LiveDoc, a.conversationId, ctx as never);
-  return live?.run?.first === undefined ? undefined : String(live.run.first);
-}
+export { runAnchor };
 
 export type WriteSpikeLog = (e: { opKey: string; anchor: string | undefined; deduplicated: boolean; text: string }) => void;
 

@@ -1,5 +1,6 @@
 import { AppError, uuidv7, type Clock, type RuntimePort } from "@durakeep/core";
 import type { SqlDatabase } from "@durakeep/db";
+import { ConversationDirectory } from "./directory.ts";
 
 export type Conversation = {
   id: string;
@@ -80,6 +81,11 @@ export class ConversationService {
     );
     if (!r) throw new AppError("not_found", "会话不存在");
     return toRow(r);
+  }
+
+  /** 工具与 AppGuard 用：按 Pi 会话 ID 找到业务会话（含 owner）。找不到返回 undefined。 */
+  byPiId(piConversationId: string) {
+    return new ConversationDirectory(this.#db).byPiId(piConversationId);
   }
 
   /** 取得可用于发送的会话：已归档视为不可用。 */

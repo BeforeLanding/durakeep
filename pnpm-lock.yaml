@@ -110,12 +110,18 @@ importers:
 
   packages/runtime-pi:
     dependencies:
+      '@durakeep/conversations':
+        specifier: workspace:*
+        version: link:../conversations
       '@durakeep/core':
         specifier: workspace:*
         version: link:../core
       '@durakeep/db':
         specifier: workspace:*
         version: link:../db
+      '@durakeep/knowledge':
+        specifier: workspace:*
+        version: link:../knowledge
       '@earendil-works/chord':
         specifier: 1.5.0
         version: 1.5.0

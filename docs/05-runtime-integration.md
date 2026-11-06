@@ -72,6 +72,8 @@ export async function startPi(deps: PiDeps): Promise<PiRuntime> {
 
 ### 4.1 AppCore：preamble section（静态）
 
+> 实现：`buildPreamble({ memory, reminders })`。渲染结果在构造时就固定（文本一变就会追加 `pi.system`，ADR-05），所以按“已启用的工具”裁剪规则：P1 只有知识库，不含 `memory_*` 与提醒的规则；P2 启用对应工具时再打开。下面是全部规则的完整文本。
+
 ```text
 你是用户的个人知识与日常助理。请遵守：
 1. 回答涉及用户收藏的资料、用户偏好或过去的决定时，先调用 kb_search 或 memory_search，再回答。
@@ -116,11 +118,11 @@ MVP 不使用 `afterRun`、`onYield` 和 `beforeRequest`。
 
 | 工具 | 档位 | 读/写 | replay | 幂等方式 | 参数（pi-schema） | 返回 |
 |---|---|---|---|---|---|---|
-| `kb_search` | P1 | 读 | safe | 无需 | `{ query: str(1..200), top_k?: num(1..10)=6, tags?: str[] }` | `<source>` 块；structured：`results[]` |
-| `kb_get_source` | P1 | 读 | safe | 无需 | `{ chunk_id: num, expand?: num(0..2)=0 }` | 目标片段，以及前后各 `expand` 个片段 |
-| `kb_list_documents` | P1 | 读 | safe | 无需 | `{ tag?: str, limit?: num(1..20)=10 }` | 标题、ID、状态 |
-| `kb_capture_text` | P1 | 写 | safe | op_key + 内容哈希 | `{ title: str(1..120), text: str(1..100000), tags?: str[] }` | `document_id`、`status`、`deduplicated` |
-| `kb_capture_url` | P1 | 写 | safe | op_key + URL 唯一 | `{ url: str, tags?: str[] }` | `document_id`、`job_id`、“已排队” |
+| `kb_search` | P1 | 读 | safe | 无需 | `{ query: str(1..200), top_k?: int(1..10)=6, tags?: str[≤10] }`；`tags` 为“任一命中”（资料带有其中任意一个标签） | `<source>` 块；`details`：`{ query, returned, omitted, chunk_ids[], results[] }`（不含资料原文） |
+| `kb_get_source` | P1 | 读 | safe | 无需 | `{ chunk_id: int(≥1), expand?: int(0..2)=0 }` | 目标片段，以及前后各 `expand` 个片段（同一版本，两端自动收窄）；片段不存在 / 属于别人 / 已停止使用 → 错误结果 |
+| `kb_list_documents` | P1 | 读 | safe | 无需 | `{ tag?: str, limit?: int(1..20)=10 }` | 标题、ID、状态（只列“可用”与“处理中”，不含停止使用 / 失败） |
+| `kb_capture_text` | P1 | 写 | safe | op_key + 内容哈希 | `{ title: str(1..120), text: str(1..100000), tags?: str[≤10] }` | JSON：`document_id`、`status`、`deduplicated`、`message` |
+| `kb_capture_url` | P1 | 写 | safe | op_key + URL 唯一 | `{ url: str(1..2000), tags?: str[≤10] }` | JSON：`document_id`、`job_id`、`status:"queued"`、`deduplicated`、`message` |
 | `memory_search` | P2 | 读 | safe | 无需 | `{ query: str, scope?: str }` | `memory_id@revision`、key、value |
 | `memory_remember` | P2 | 写 | safe | op_key + 活动 key 唯一 | `{ kind: enum, key: str(/^[a-z0-9_.]{1,64}$/), value: str(1..200), scope: str="global" }` | `memory_id`、`revision`、被替换的旧值 |
 | `reminder_create` | P2 | 写 | safe | op_key | `{ text: str(1..200), local_datetime: str(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), timezone: str, document_id?: str }` | 回显：完整日期、星期、时区、UTC |
@@ -129,6 +131,14 @@ MVP 不使用 `afterRun`、`onYield` 和 `beforeRequest`。
 | `reminder_cancel` | P2 | 写 | safe | 天然幂等 | `{ reminder_id: str }` | 状态 |
 
 **不提供给模型的操作：** 删除资料或记忆、导出、外发、任何文件或 shell 操作。
+
+**工具的共同行为（T-15 实测）：**
+
+- **owner 不是参数**：Pi 在参数校验层就拒绝多余字段（错误信息 `owner_id: unknown field`），模型无法传入 owner；owner 一律由 `ConversationLookup.byPiId(api.conversationId)` 取得。
+- **预期内的业务失败**（片段不存在、链接非法、资料已停止使用……）返回 `isError: true` 的工具结果和面向用户的中文说明，**不抛异常**；只有意料之外的错误才抛出。
+- **AppGuard**：`beforeTool` 按会话映射检查：找不到业务会话或已归档 → block “会话不可用”；工具名不在白名单（`TOOL_ALLOWLIST`）→ block “该工具不可用”。新增工具要同时登记在本表和白名单里。
+- **写工具**走 `operations.once()`，`op_key = (会话, run 锚点, 工具名, 规范化参数)`，业务写入与幂等记录在同一个事务里；读不到 run 锚点时报错而不是继续。业务提交之后、返回结果之前有故障点 `tool.after_business_commit`（R2）。`deduplicated` 为真有两种来源：同一 run 内的重放（op_key 命中），以及内容 / URL 本身已存在（文本按内容哈希，URL 按规范化后的地址；同一个 URL 同一天只有一个作业）。
+- **`details` 才是引用校验的依据**（T-16）：它由工具写入，只含 chunk id / document id，不含资料原文；而输出文本里的内容可能受资料影响，不应拿来判断“这次 run 里出现过哪些片段”。
 
 ### 5.1 `kb_search` 的输出格式
 
@@ -140,7 +150,7 @@ MVP 不使用 `afterRun`、`onYield` 和 `beforeRequest`。
 （共 2 条；如需上下文可调用 kb_get_source）
 ```
 
-片段原文中出现的 `</source>` 要转义为 `&lt;/source&gt;`，防止标签被提前闭合。
+实际格式（T-15）：`<source id="chunk:N" [chunks="N,M"] title="…" version="YYYY-MM-DD 抓取|收藏" [loc="…"]>`。`id` 是得分最高的那个片段；同一版本内相邻（ordinal 相差 1）的命中被合并成一个结果，此时 `chunks` 列出全部片段 id，文本按字符区间去掉了 80 字符的重叠。属性值里的 `"`、`<`、`>`、`&` 和换行都被转义。**片段原文中的 `<source` 与 `</source`（不区分大小写）一律转义为 `&lt;source` / `&lt;/source`**，资料内容无法提前闭合标签，也无法伪造新的 `<source>` 块。输出总长度 ≤ 6,000 字符：超出时截掉末尾的结果并在末行说明“另有 M 条因长度限制未显示”，第一个结果永远保留。没有可用关键词（只有停用词 / 标点）或没有命中时，返回提示文字而不是空输出。
 
 ### 5.2 写工具模板（ADR-04）
 
