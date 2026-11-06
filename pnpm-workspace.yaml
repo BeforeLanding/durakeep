@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# 依赖精确锁定（AGENTS.md 硬规则 7）
+savePrefix: ""
+
+# 第三方安装脚本一律不执行（显式记录为已拒绝，避免 pnpm 11 把“未决”当作错误）
+allowBuilds:
+  "@google/genai": false
+  protobufjs: false

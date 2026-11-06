@@ -10,3 +10,4 @@ data/
 coverage/
 tests/**/reports/
 .DS_Store
+.tmp/

@@ -1,0 +1,5 @@
+{
+  "name": "@durakeep/server",
+  "private": true,
+  "type": "module"
+}

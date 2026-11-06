@@ -1,0 +1,26 @@
+{
+  "name": "durakeep",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --project int",
+    "test:recovery": "vitest run --project recovery --passWithNoTests",
+    "lint": "pnpm run lint:deps && pnpm run lint:es && pnpm run typecheck",
+    "lint:deps": "depcruise packages apps --config .dependency-cruiser.cjs",
+    "lint:es": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "dependency-cruiser": "18.7.2",
+    "eslint": "10.14.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}
