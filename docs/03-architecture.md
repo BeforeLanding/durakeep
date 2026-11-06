@@ -73,7 +73,7 @@ tests/
 ```text
 main()
  1. 读取配置（env + data/config.json），校验 DEEPSEEK_API_KEY（演示模式除外）
- 2. InstanceLock.acquire(data/.lock)       ← 写入 pid 和启动时间；锁属于活进程时退出
+ 2. InstanceLock.acquire(data/app.lock)    ← 写入 pid；锁属于活进程时退出
  3. db = openDatabase(data/app.sqlite)     ← 一个 NodeSqliteDatabase，WAL，busy_timeout 5s
  4. migrate(db)                            ← app_* 表的迁移；Pi 表由 Pi 自己负责
  5. clock = SystemClock（或演示模式与测试中的 FakeClock）
@@ -88,7 +88,7 @@ main()
 
 关闭顺序（收到 SIGINT/SIGTERM）：HTTP 停止接纳 → worker 停止领取新作业 → `harness.close()`（等待正在执行的任务代码返回）→ `db.close()` → 释放锁。
 
-**实例锁。** Pi 不提供跨进程锁，用 `data/.lock` 实现：以 `wx` 方式独占创建；如果文件已存在，读取其中的 pid，进程不存在就视为过期锁，删除后重试。锁检查必须在打开数据库之前完成。
+**实例锁。** Pi 不提供跨进程锁，用 `data/app.lock` 实现（T-05）：以 `wx` 方式独占创建并写入 pid；如果文件已存在，读取其中的 pid，进程不存在就视为过期锁，删除后重试。不防 pid 复用。`pnpm cli init|passwd` 同样先取这把锁，所以服务运行时它们会被拒绝。锁检查必须在打开数据库之前完成。
 
 **进程管理。** 开发时用 `pnpm dev`。长期运行时，Windows 用 NSSM 或任务计划程序，Linux 用 systemd，配置 `Restart=on-failure`，重启间隔 5 s，并限制 5 分钟内最多重启 5 次，防止崩溃循环无限重启（Pi 的 `restartLimit` 只管任务级别）。
 

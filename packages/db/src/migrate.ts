@@ -28,6 +28,32 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       );
     `,
   },
+  {
+    id: 3,
+    sql: `
+      CREATE TABLE app_owners (
+        id           TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        timezone     TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+        created_at   INTEGER NOT NULL
+      );
+      CREATE TABLE app_auth (
+        owner_id      TEXT PRIMARY KEY REFERENCES app_owners(id),
+        password_hash TEXT NOT NULL,
+        failed_count  INTEGER NOT NULL DEFAULT 0,
+        locked_until  INTEGER,
+        updated_at    INTEGER NOT NULL
+      );
+      CREATE TABLE app_sessions (
+        token_hash   TEXT PRIMARY KEY,
+        owner_id     TEXT NOT NULL REFERENCES app_owners(id),
+        created_at   INTEGER NOT NULL,
+        expires_at   INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL
+      );
+      CREATE INDEX app_sessions_owner ON app_sessions(owner_id);
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

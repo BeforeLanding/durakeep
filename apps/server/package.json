@@ -1,5 +1,12 @@
 {
   "name": "@durakeep/server",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@durakeep/core": "workspace:*",
+    "@durakeep/db": "workspace:*",
+    "@durakeep/runtime-pi": "workspace:*",
+    "@hono/node-server": "2.1.6",
+    "hono": "4.13.16"
+  }
 }

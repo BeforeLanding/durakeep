@@ -8,7 +8,7 @@
 
 **认证。** 除 `POST /v1/auth/login` 和 `GET /v1/health` 外，所有接口都要求带 `sid` cookie（HttpOnly、SameSite=Strict、Path=/）。缺少或过期时返回 401。
 
-**来源校验。** `POST`、`PATCH`、`DELETE` 请求的 `Origin` 必须等于服务自身的 origin，否则返回 403 `origin_mismatch`。
+**来源校验。** `POST`、`PATCH`、`DELETE` 请求（包括登录）的 `Origin` 必须与服务自身的 origin 完全相等（协议、主机、端口都比较；`localhost` 与 `127.0.0.1` 不等价），否则返回 403 `origin_mismatch`。没有 `Origin` 头时：带 `Sec-Fetch-Site` 且不是 `same-origin` / `none`（即浏览器发出的跨站请求）同样拒绝；不带该头的非浏览器客户端（curl、CLI）放行。
 
 **幂等。** 会创建资源的 `POST` 接受 `client_request_id`（UUID）。同一个 ID、同样的内容重复提交，返回第一次的结果，状态码为 200 而不是 201/202；同一个 ID、不同内容返回 409 `idempotency_conflict`。
 
@@ -29,7 +29,7 @@
 | 403 | `origin_mismatch` | 跨站请求 |
 | 404 | `not_found` | 资源不存在，或不属于当前 owner（两种情况不区分） |
 | 409 | `idempotency_conflict` / `conversation_busy` / `revision_conflict` | 冲突 |
-| 413 | `too_large` | 超过大小限制 |
+| 413 | `too_large` | 超过大小限制（JSON 请求体默认上限 1 MB；文件上传另有 2 MB 上限，在 T-13 实现） |
 | 422 | `ssrf_blocked` / `unsupported_type` / `time_in_past` | 业务规则拒绝 |
 | 423 | `locked` | 登录失败次数过多，暂时锁定 |
 | 429 | `rate_limited` | 限流 |
@@ -41,7 +41,7 @@
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
-| POST | `/v1/auth/login` | `{ "password": "..." }` | 204，并设置 `sid` cookie；失败返回 401；锁定时返回 423，带 `retry_after_ms` |
+| POST | `/v1/auth/login` | `{ "password": "..." }`（非空字符串，≤256） | 204，并设置 `sid` cookie（HttpOnly、SameSite=Strict、Path=/、Max-Age=14 天）；失败返回 401；连续失败 5 次锁定 60 s，期间一律返回 423，`error.details.retry_after_ms` 与 `Retry-After` 头（秒）给出剩余时间；登录接口每分钟 10 次，超出返回 429 |
 | POST | `/v1/auth/logout` | — | 204，删除会话 |
 | GET | `/v1/me` | — | `{ "owner_id", "display_name", "timezone" }` |
 
@@ -229,8 +229,8 @@ event: unread         data: {"count":3}
 
 | 命令 | 作用 |
 |---|---|
-| `pnpm cli init` | 交互式设置口令和时区，创建 owner |
-| `pnpm cli passwd` | 修改口令（会让所有会话失效） |
+| `pnpm cli init [--timezone=Asia/Shanghai]` | 设置口令（至少 8 个字符）和时区，创建 owner。终端中口令不回显且需输入两次；管道输入时按行读取 stdin（脚本、测试用） |
+| `pnpm cli passwd` | 修改口令（会让所有会话失效）。服务运行时被实例锁拒绝 |
 | `pnpm cli backup` | 服务运行时通过 HTTP 调用备份；服务停止时直接执行 |
 | `pnpm cli restore <file>` | 要求服务已停止；恢复后把投递设为暂停 |
 | `pnpm cli export <dir>` | 离线导出 |

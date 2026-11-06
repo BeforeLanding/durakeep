@@ -9,8 +9,10 @@ import { createRealProvider } from "./provider.ts";
 
 export type PiDeps = {
   mode: AppMode;
-  /** SQLite 文件路径；Pi 表使用 pi_ 前缀（ADR-02）。 */
-  dbPath: string;
+  /** SQLite 文件路径；Pi 表使用 pi_ 前缀（ADR-02）。已传入 db 时忽略。 */
+  dbPath?: string;
+  /** 宿主已打开的共享连接（见 openAppDatabase）。 */
+  db?: NodeSqliteDatabase;
   /** test / demo 必须提供。 */
   faux?: FauxProviderHandle;
   extensions?: Extension[];
@@ -25,6 +27,11 @@ export type PiDeps = {
 };
 
 export const context = BACKGROUND_CONTEXT;
+
+/** 打开共享的 NodeSqliteDatabase（WAL、busy_timeout 5s 为 chord 的默认）。连接由本包打开，业务侧只见 SqlDatabase 接口。 */
+export function openAppDatabase(path: string): Promise<NodeSqliteDatabase> {
+  return openNodeSqliteDatabase(path);
+}
 
 export type PiHandle = {
   db: NodeSqliteDatabase;
@@ -41,7 +48,7 @@ export async function startPi(deps: PiDeps): Promise<PiHandle> {
     models.setProvider(await createRealProvider(deps.mode));
   }
 
-  const db = await openNodeSqliteDatabase(deps.dbPath);
+  const db = deps.db ?? (await openAppDatabase(deps.dbPath ?? ":memory:"));
   const registry = createRegistry();
   for (const ext of deps.extensions ?? []) registry.install(ext);
   for (const ext of deps.extensionsFactory?.(db) ?? []) registry.install(ext);

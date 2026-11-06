@@ -15,6 +15,7 @@
 （登记发现但未处理的问题，等用户决定是否开新任务。）
 
 - guardDb 只能检测事务回调异步链内的误用；脱离异步上下文（如 setTimeout/事件回调里再调外层 db）抓不到。依赖 AGENTS.md 规则 6 与代码评审。（T-04）
+- TTY 下不回显的口令输入（cli init / passwd）没有自动化验证；SIGTERM 优雅关闭在 Windows 上不可测。（T-10）
 - 实例锁靠 pid 探测，不防 pid 被复用；两个进程同时接管同一把陈旧锁时，只有一个成功，另一个得到 InstanceLockedError（可重试）。（T-05）
 - 生成阶段（模型请求）反复崩溃导致 run 以 restart_limit 结束的路径未覆盖；P0 只测了工具内崩溃循环。（T-05）
 - 备份只测了运行中单次 VACUUM INTO；未测重度并发写入下的备份耗时与对对话提交的阻塞（ADR-02 已说明批量写入需分批）。（T-05）
@@ -66,6 +67,13 @@
 - 意外 / 偏离设计：Submission.answer 是助手条目的 ID 而不是消息；waitSubmission 的 reason 不止 RunFailureReason；pi.live 的 tools 是数组、部分回答在 generation.message。均已改 05 §7。ADR 决策内容没有被修改（只补了验证结果和实现须知）。
 - 对文档的修改：05 §7；DECISIONS（状态 + 三条验证结果）；README 状态行；09 的 P0 出口标注。
 - 待用户决定（进入 P1 前）：见 P0-REPORT §8——是否 push；CI 从未在远端跑过且未在 Node 22.19.0 上验证；loadEarlier 未实现；T-17 需要个人资料；是否整理“1.5.0 实际行为备忘”。
+
+## 2026-11-06 T-10 认证与 HTTP 骨架
+- 改动：apps/server（Hono 4.13.16 + @hono/node-server 2.1.6，均精确锁定，已获用户确认）：app.ts（路由、统一错误格式、Origin 校验、认证中间件、请求体上限 1 MB、只记方法/路径/状态的日志）、auth.ts（scrypt 口令、会话 token 只存 sha256、14 天过期、连续 5 次失败锁 60 s、改口令使会话失效）、rateLimit.ts（固定窗口，登录 10/分钟）、password.ts、listen.ts、main.ts（锁 → 打开库 → 迁移 → 监听 127.0.0.1）、cli.ts（init / passwd）；core：AppError、Clock（SystemClock / FakeClock）、uuidv7；db：迁移 3（app_owners、app_auth、app_sessions，与 04 §3 的 DDL 一致）；runtime-pi：openAppDatabase 导出、startPi 可接收已打开的 db。
+- 测试：S1（未登录各路径含伪造 cookie 均 401，health 例外）、S2（5 次错误 → 423，期间正确口令也 423，Retry-After，60 s 后恢复；成功登录清零计数；登录限流 429）、S3（cookie 属性；登出、14 天后过期、改口令后旧 cookie 失效；库中只有 sha256）、S4（外部 / 异端口 / 异主机名 / https / null 的 Origin 均 403，含已登录会话的登出；Sec-Fetch-Site 跨站 403；curl 式无 Origin 放行）；错误格式、400/404/413；日志不含口令 / token；真实监听 127.0.0.1 的 HTTP 往返；真实子进程：cli init（管道输入）→ 启动服务 → 登录 → 健康，服务运行时 cli passwd 被实例锁拒绝，重复 init 被拒，输出不含口令。pnpm test 全部通过（见下方最终数字）。
+- 意外 / 偏离设计：①安装前确认了新依赖（hono、@hono/node-server，无安装脚本）。②CLI 首版用 readline 读管道输入，EOF 先触发 close 导致口令行丢失（真 bug，测试发现）；改为非 TTY 时一次性读完 stdin。③TTY 下的不回显口令输入只是实现，**未做自动化验证**（没有交互式终端）。④没有 Origin 头的处理在 06 里没写，按“浏览器跨站（Sec-Fetch-Site）拒绝、curl 放行”实现并写回 06。⑤Windows 上无法测试 SIGTERM 优雅关闭（SIGTERM 在 Windows 等同强杀），main.ts 的 shutdown 路径未测。⑥03 里写的锁文件名 data/.lock 与 T-05 实现的 app.lock 不一致，已修文档。⑦heredoc 里含 SQL 的 DELETE FROM 被安全检查误判为 rm，改用 Write 工具写文件，无影响。
+- 对文档的修改：03 §3（锁文件名）、06 §1（Origin 无头策略、413 上限）、06 §2（登录细节）、06 §10（cli 行为）。
+- 远端 CI：P0 的 8 个提交推送后四个组合（ubuntu/windows × Node 22.19.0/24）全部通过；此前“Node 22.19.0 与 Linux 未验证”的缺口已消除。
 
 ---
 

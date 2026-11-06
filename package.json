@@ -12,7 +12,9 @@
     "lint": "pnpm run lint:deps && pnpm run lint:es && pnpm run typecheck",
     "lint:deps": "depcruise packages apps --config .dependency-cruiser.cjs",
     "lint:es": "eslint .",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "cli": "node apps/server/src/cli.ts",
+    "dev": "node --watch apps/server/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
