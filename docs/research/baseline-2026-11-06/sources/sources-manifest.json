@@ -1,0 +1,109 @@
+{
+  "research_date": "2026-11-06",
+  "timezone": "Asia/Shanghai",
+  "pi_commit": "2a32a605a9f18a5f0191f65358a2e764b2f69fc7",
+  "npm_version": "1.5.0",
+  "npm_tarball_sha512_verified": true,
+  "files": [
+    {
+      "path": "sources/LICENSE",
+      "bytes": 1069,
+      "sha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+    },
+    {
+      "path": "sources/npm-metadata.json",
+      "bytes": 326,
+      "sha256": "b4d02fa515a3c0cc76d82cfb068e947b50a5d8803ba870e8f4e8651048e06b7a"
+    },
+    {
+      "path": "sources/npm-release.json",
+      "bytes": 136,
+      "sha256": "15e5ec044682aaf02374e091872cd73b05e95cd990d0f40c26e1f20eda93f56d"
+    },
+    {
+      "path": "sources/packages__durable__CHANGELOG.md",
+      "bytes": 79044,
+      "sha256": "f2b393c7442a90d291000eccd69cffb925d27ef56a204d3bca0203c0aeb710da"
+    },
+    {
+      "path": "sources/packages__durable__docs__spec.md",
+      "bytes": 363177,
+      "sha256": "0a8976d47b8867393b8d2cd6646a6627ca13f78a6b35154636a5f032a66f90ee"
+    },
+    {
+      "path": "sources/packages__durable__package.json",
+      "bytes": 6184,
+      "sha256": "63f2c3f3af7795aed20b6bf427917324db16129898c918fd6e7074c3df252d1b"
+    },
+    {
+      "path": "sources/packages__durable__README.md",
+      "bytes": 82903,
+      "sha256": "715d373e45f2a79ffb2c50a09bcbea5d93db4e6bccdad614b8ff3dff58dcc137"
+    },
+    {
+      "path": "sources/packages__durable__src__index.ts",
+      "bytes": 4984,
+      "sha256": "d4bb495315dac506808b05d20a6b256f77fab0e9ccd0c5acb1b63a01df8b4fd4"
+    },
+    {
+      "path": "sources/packages__durable__src__storage__sqlite__node.ts",
+      "bytes": 998,
+      "sha256": "a71180a69e8d9225ccdba50f8eb7e908a3454b6b537657ba18a964d891f29e1c"
+    },
+    {
+      "path": "sources/packages__durable__test__examples__13-chat.ts",
+      "bytes": 2047,
+      "sha256": "79b2c849059c6d9c718115fc39e876d819f3f396dccc5e1a99e73b2ae945b00e"
+    },
+    {
+      "path": "sources/packages__durable__test__examples__15-real-model.ts",
+      "bytes": 3003,
+      "sha256": "2b0f47681147478328c95f332d71122785c9b86b45de52be94cc68ea5130ea06"
+    },
+    {
+      "path": "sources/packages__durable__test__examples__19-inbox.ts",
+      "bytes": 3249,
+      "sha256": "52844936e583617b19df805f8ad451b08bdf87525a89ee7007d2a9561336e1d3"
+    },
+    {
+      "path": "sources/packages__durable__test__examples__24-compaction.ts",
+      "bytes": 5862,
+      "sha256": "f40b7e09024f33a5ae0a0c025f7ab77d9283c2143d5a41d480b5eab68637551e"
+    },
+    {
+      "path": "sources/packages__durable__test__examples__34-submit-in-commit.ts",
+      "bytes": 4144,
+      "sha256": "1d7de9f22f0cfdb8ac91f7fa60d2941b996252a125b46bc1e548daf8e0feb324"
+    },
+    {
+      "path": "sources/pi-commit.txt",
+      "bytes": 42,
+      "sha256": "f23a4c71c700dd7e3744bea9ba518fa9fe6001e678521ac2c0fb565e41304b22"
+    },
+    {
+      "path": "sources/pi-durable-1.5.0.tgz",
+      "bytes": 1022014,
+      "sha256": "7e95b160ebebb7059dd5f5502419b85d52f1e0432a9e914e608364ae9b2b2a69"
+    },
+    {
+      "path": "sources/README.md",
+      "bytes": 10679,
+      "sha256": "e5a75074d9a53e6d00d616a42fbe138200b46022e8e392ace1c4c08a40af6cd5"
+    },
+    {
+      "path": "sources/published-1.5.0/package/CHANGELOG.md",
+      "bytes": 77598,
+      "sha256": "95787f36775a35b16cbffa6ef06b53ecc506b39222c242c625d0000fec011780"
+    },
+    {
+      "path": "sources/published-1.5.0/package/package.json",
+      "bytes": 6184,
+      "sha256": "63f2c3f3af7795aed20b6bf427917324db16129898c918fd6e7074c3df252d1b"
+    },
+    {
+      "path": "sources/published-1.5.0/package/README.md",
+      "bytes": 82897,
+      "sha256": "bb62ce05ece7ad895b38b3739f2c87cbeb26fe8a259437950e38fd106ffd1f87"
+    }
+  ]
+}

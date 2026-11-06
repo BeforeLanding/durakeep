@@ -1,0 +1,9 @@
+{
+  "latest": "1.5.0",
+  "published": "2026-11-02T10:58:39.55Z",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "integrity": "sha512-xeBP2vIo5NvsCMQ4Y/V+Z164xQEi9JWiBWHdjn4Z15EnFqV3c0FxJAX26FqyyyintrYyk+Enre94GNcvRlBA5g==",
+  "tarball": "https://registry.npmjs.org/@earendil-works/pi-durable/-/pi-durable-1.5.0.tgz"
+}

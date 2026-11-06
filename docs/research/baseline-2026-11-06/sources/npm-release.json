@@ -1,0 +1,8 @@
+{
+  "name": "@earendil-works/pi-durable",
+  "version": "1.5.0",
+  "gitHead": null,
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
