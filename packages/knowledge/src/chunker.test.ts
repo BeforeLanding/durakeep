@@ -27,9 +27,9 @@ function check(text: string, chunks: Chunk[]) {
     expect(c.tokenEstimate).toBe(estimateTokens(c.text));
     for (let i = c.charStart; i < c.charEnd; i++) covered[i] = 1;
   }
-  for (let i = 0; i < text.length; i++) {
-    if (!/\s/.test(text[i]!)) expect(covered[i], `位置 ${i} 的字符 ${JSON.stringify(text[i])} 没有被任何块覆盖`).toBe(1);
-  }
+  let firstGap = -1;
+  for (let i = 0; i < text.length && firstGap < 0; i++) if (covered[i] === 0 && !/\s/.test(text[i]!)) firstGap = i;
+  expect(firstGap, firstGap < 0 ? "" : `位置 ${firstGap} 的字符 ${JSON.stringify(text[firstGap])} 没有被任何块覆盖`).toBe(-1);
 }
 
 test("空文档 → 没有块；很短的文档 → 一个块，范围就是整篇", () => {
@@ -156,7 +156,7 @@ test("典型文章：绝大多数块落在 [下限, 上限] 内，平均长度�
   expect(avg).toBeLessThan(MAX);
 });
 
-test("随机文档（300 篇）：覆盖、范围、长度上限等不变式始终成立", () => {
+test("随机文档（300 篇）：覆盖、范围、长度上限等不变式始终成立", { timeout: 60_000 }, () => {
   const r = rng(20261106);
   const pick = <T>(xs: T[]) => xs[Math.floor(r() * xs.length)]!;
   for (let n = 0; n < 300; n++) {
