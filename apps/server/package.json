@@ -6,6 +6,8 @@
     "@durakeep/conversations": "workspace:*",
     "@durakeep/core": "workspace:*",
     "@durakeep/db": "workspace:*",
+    "@durakeep/jobs": "workspace:*",
+    "@durakeep/knowledge": "workspace:*",
     "@durakeep/runtime-pi": "workspace:*",
     "@hono/node-server": "2.1.6",
     "hono": "4.13.16"

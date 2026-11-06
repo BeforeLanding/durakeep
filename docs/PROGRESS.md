@@ -15,6 +15,9 @@
 （登记发现但未处理的问题，等用户决定是否开新任务。）
 
 - guardDb 只能检测事务回调异步链内的误用；脱离异步上下文（如 setTimeout/事件回调里再调外层 db）抓不到。依赖 AGENTS.md 规则 6 与代码评审。（T-04）
+- 抽取质量只在 10 个页面上检查过：没有微信公众号转载、依赖 JS 渲染的页面、真实 GBK 站点的样本；MDN 的“上一页 / 下一页”导航行与 React 文档站的末尾 Sitemap 段会留在正文里。（T-13）
+- 抓取只支持 http / https 的 HTML / 文本 / Markdown；PDF、图片、需要登录的页面不支持（返回 unsupported_type 或 HTTP 错误）。（T-13）
+- 作业队列是单进程内存调度：没有租约、没有跨进程互斥（靠实例锁保证）。（T-13）
 - main.ts 的 dev / prod 路径（真实 DeepSeek provider）从未运行过；CHAT_MODEL 的取值只离线核对过目录。首次真实对话需要用户批准（AGENTS.md 硬规则 1）。（T-11）
 - TTY 下不回显的口令输入（cli init / passwd）没有自动化验证；SIGTERM 优雅关闭在 Windows 上不可测。（T-10）
 - 实例锁靠 pid 探测，不防 pid 被复用；两个进程同时接管同一把陈旧锁时，只有一个成功，另一个得到 InstanceLockedError（可重试）。（T-05）
@@ -87,6 +90,22 @@
 - 测试：tests/int/stream.test.ts 9 个用例（共跑 4 轮全过，首轮有 5 个失败，均为测试自身问题，见下）：流式推进（响应头、初始快照、生成中的 partialText、最终条目只含 user / assistant、快照数 ≤ 用时 / 100 ms + 余量；实测一次约 1.1 s 的回答收到 8 个快照）；**断线重连只补发缺失条目**（断线期间两轮对话，用 Last-Event-ID 重连后快照恰为 4 条缺失条目，没有第一轮的；游标指向最新则为空）；无效 / 超前游标；未登录 401、别人的或不存在的会话 404 不开流；keep-alive 与观察者释放（含多连接独立）；model_error 带中文原因；条目分页（7 轮对话每页 4 条走完 4 页，无重复无遗漏，升序）；全局流按 owner 过滤、runtime 失效可见；真实 socket 上的 SSE 帧格式、续传、客户端取消后约 35 ms 释放观察者。apps/server 的单测（throttle、password）。最终完整运行：pnpm lint 通过；pnpm test 21 文件 69 用例；pnpm test:recovery 4 文件 9 用例。无真实模型调用。
 - 意外 / 偏离设计：①发现 vitest 的 unit 项目只收 packages/*，T-10 写的 apps/server/src/password.test.ts 一直没被运行；已把 apps/* 加入 include，补跑通过（本该在 T-10 发现）。②测试首轮失败的原因：用 Object.create(runtime) 包装 PiRuntime 会因私有字段而抛 TypeError（改用 Proxy）；观察者计数器没在 setup 里清零；faux 流速太快看不到 partialText。③重连后快照 entries 只含错过的条目（不是全量），客户端必须按 id 合并；06 已写明。④助手 / 工具条目没有时间戳，AppEntry 的 at 只有用户条目有，06 示例已改。⑤引用校验（citations / valid）未做，属 T-16；全局流里的 notification / job / unread 事件只有通道，没有生产者（后续任务接入）。⑥真实 socket 用例中 server.close 要等 fetch 的空闲连接约 4 s，不是实现问题。
 - 对文档的修改：05 §7（loadEarlier 签名、snapshot.cursor、条目扫描说明）、06 §3（entries 响应、事件条目形状）、06 §9（游标语义、无效游标、runFailure 文案、at 说明）。
+
+## 2026-11-06 T-13 采集：文本、Markdown、网页
+- 改动：**新依赖**（安装前已获用户确认，均精确锁定，无安装脚本）：linkedom 0.18.15、@mozilla/readability 0.6.0、turndown 7.2.5、@types/turndown 5.0.6，只放在 packages/knowledge。**不引入 undici**（与 07 原方案不同，见下）。新包：packages/jobs（enqueue 可在调用方事务内入队、(owner, dedupe_key) 去重；JobWorker：领取 / 并发 2 / 退避重试 / 永久失败 / checkpoint / 取消 / 手动重试 / 启动 recover）、packages/knowledge（url 规范化、SSRF 判定、safeFetch、robots、字符集、BlobStore、extract、KnowledgeService 与四阶段作业处理器）。db：迁移 5（app_documents、app_document_versions、app_jobs）、onceStrict（请求级幂等，同 key 不同参数 → 409）。apps/server：POST/GET /v1/documents（JSON 与 multipart 上传）、详情 / 正文 / 原文（附件）/ PATCH / revoke / restore、/v1/jobs 列表 / 详情 / 重试 / 取消、全局流的 job 事件、采集限流 20/分钟、采集接口请求体上限 3 MB；main.ts 接入 blob 目录与 JobWorker；core 新增错误码 robots_disallowed / fetch_failed / fetch_timeout / extract_failed。tests/support/server.ts（进程级测试共享辅助，t11 已改用）；scripts/extract-quality-check.ts。
+- 测试（最终完整运行）：pnpm lint 通过；pnpm test 30 文件 136 用例通过；pnpm test:recovery 5 文件 11 用例通过。新增：纯函数单测（URL 规范化、SSRF 判定含 IPv6 / mapped / NAT64 / 6to4 的绕过写法、字符集含 GBK、blob、robots、抽取 11 个）；jobs 10+1 个；safe-fetch 12 个（**S6**：23 种地址写法在默认策略下被拒且连接数为 0；**S7**：302 跳转到内网 / 元数据 / file:// / 别的端口被拒，跳转目标从未被连接；**S8**：每跳只解析一次、连接固定在已检查 IP、重绑定与混合解析被拒；**S9**：6 MB 流式中断、Content-Length 超限、超时、第 6 次重定向、累计时长）；ingest 14 个（文本 / Markdown / 上传、去重与幂等、**S12**、URL 规范化与抓取、GBK、版本、失败与重试、列表、owner 隔离、限流）；**R13** 进程级：tests/recovery/t13.test.ts 两组各 ×20（job.after_fetch 被杀 → 重启 → 从 checkpoint 继续：不重复抓取、版本恰好 1 个、blob 恰好 2 个、作业 attempts=2；以及隔天重新采集时被杀仍不产生重复版本）。其中 R13 整套还随完整回归多跑了 1 轮。
+- **真实页面检查**：10 个中文页面（百科 3 / 文档站 4 / 博客 3），结果与判断见 docs/spikes/T13-extraction-check.md。结论：linkedom + Readability + turndown 可用，不需要 jsdom。**实际请求 24 次页面 GET + 20 次 robots.txt，超出了你确认的“每页 1 次”**（整轮跑了 2 次，另有 2 次定位问题的探测），请求间隔 ≥1 s，没有被限流。
+- 意外 / 偏离设计：
+  ①**JobWorker 丢失唤醒（真实缺陷，ingest 测试发现）**：wake() 恰好撞上正在收尾的 pump 时被丢弃，新入队的作业无人领取；已修（pump 期间收到 wake 则结束后再跑一轮），并加了修复前必失败的回归测试。
+  ②07 规定的 User-Agent 含中文，HTTP 头只能 Latin-1，Node 抛 ERR_INVALID_CHAR；改为纯 ASCII。
+  ③07 写“用 undici 的 connect.lookup 固定 IP”：改用 Node 内置 http/https.request 的 lookup 选项，不引入 undici。
+  ④07 写正文做 NFKC：会把全角标点改成半角、破坏引用保真度，改为 NFC，NFKC 留给分词（T-14）。
+  ⑤07 的“上传 ≤2 MB”与“正文 ≤50 万字符”互相矛盾（2 MB 的 ASCII 文件有 200 万字符）；以更紧的 50 万字符为准，已写明。
+  ⑥真实页面暴露的问题（维基百科小标题被 Readability 整体清掉、链接 / 图片噪声、Vue 的标题取成站点名、React 文档站以 text/plain 返回带 front matter 的 Markdown）都已修复并用合成页面固定为回归单测；其中 front matter 与信息框空行两处是第二轮真实请求之后才修的，没有再对真实站点验证。
+  ⑦vitest 的 unit 项目现在包含 apps/*（T-12 已修）；t11 的辅助代码抽到 tests/support/server.ts。
+  ⑧main.ts 新增测试专用开关 FETCH_ALLOW_LOOPBACK=1（仅 APP_MODE=test 有效），让进程级测试能抓本机站点；默认策略下 loopback 不会被连接。
+  ⑨抽取阶段后的“索引”目前是空钩子（Indexer），版本在抽取完成后直接 ready——此时 ready 只表示“已解析”，还不能检索；T-14 接入分块 / FTS。revoke / restore 暂时只改资料状态，chunks.active 的联动在 T-14。
+- 对文档的修改：07 §1.2、§1.3（SSRF 细则、连接固定方式、限制与错误分类、字符集顺序、robots 取不到按允许、测试专用开关、NFC、front matter、链接与图片、50 万字符与 2 MB、抽取验证结论）；06 §1（错误码）、§4（上传规则、通用规则、幂等与去重、raw 的安全头）、§7（作业详情）；新增 docs/spikes/T13-extraction-check.md。
 
 ---
 

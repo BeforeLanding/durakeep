@@ -88,6 +88,64 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_ingress_pending ON app_ingress_events(status) WHERE status = 'accepted';
     `,
   },
+  {
+    id: 5,
+    sql: `
+      CREATE TABLE app_documents (
+        id                 TEXT PRIMARY KEY,
+        owner_id           TEXT NOT NULL,
+        source_type        TEXT NOT NULL CHECK (source_type IN ('text','markdown','url')),
+        source_uri         TEXT,
+        title              TEXT NOT NULL,
+        status             TEXT NOT NULL CHECK (status IN ('pending','ready','failed','revoked','purging','purged')),
+        current_version_id TEXT,
+        tags_json          TEXT NOT NULL DEFAULT '[]',
+        error_code         TEXT,
+        created_at         INTEGER NOT NULL,
+        updated_at         INTEGER NOT NULL,
+        revoked_at         INTEGER
+      );
+      CREATE INDEX app_documents_owner ON app_documents(owner_id, status, updated_at DESC);
+      CREATE UNIQUE INDEX app_documents_url ON app_documents(owner_id, source_uri) WHERE source_uri IS NOT NULL;
+
+      CREATE TABLE app_document_versions (
+        id             TEXT PRIMARY KEY,
+        document_id    TEXT NOT NULL REFERENCES app_documents(id),
+        owner_id       TEXT NOT NULL,
+        content_hash   TEXT NOT NULL,
+        raw_blob       TEXT NOT NULL,
+        text_blob      TEXT,
+        parser_version TEXT NOT NULL,
+        status         TEXT NOT NULL CHECK (status IN ('parsing','indexing','ready','failed','purged')),
+        title          TEXT,
+        summary        TEXT,
+        summary_edited INTEGER NOT NULL DEFAULT 0,
+        char_count     INTEGER,
+        captured_at    INTEGER NOT NULL,
+        UNIQUE (document_id, content_hash)
+      );
+
+      CREATE TABLE app_jobs (
+        id                 TEXT PRIMARY KEY,
+        owner_id           TEXT NOT NULL,
+        kind               TEXT NOT NULL CHECK (kind IN ('ingest_text','ingest_url','summarize','extract_memory','purge_document','backup')),
+        dedupe_key         TEXT NOT NULL,
+        input_json         TEXT NOT NULL,
+        checkpoint_json    TEXT NOT NULL DEFAULT '{}',
+        status             TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed','cancelled')),
+        attempts           INTEGER NOT NULL DEFAULT 0,
+        max_attempts       INTEGER NOT NULL DEFAULT 3,
+        next_attempt_at    INTEGER NOT NULL,
+        pi_conversation_id TEXT,
+        error_code         TEXT,
+        error_message      TEXT,
+        created_at         INTEGER NOT NULL,
+        updated_at         INTEGER NOT NULL,
+        UNIQUE (owner_id, dedupe_key)
+      );
+      CREATE INDEX app_jobs_ready ON app_jobs(status, next_attempt_at) WHERE status = 'queued';
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

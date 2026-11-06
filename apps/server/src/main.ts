@@ -3,6 +3,8 @@
 import { ConversationService, IngressService } from "@durakeep/conversations";
 import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
+import { JobWorker } from "@durakeep/jobs";
+import { BlobStore, isPublicIp, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
 import { demoFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -59,12 +61,41 @@ await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
 
 const hub = new EventHub();
+
+// 采集（T-13）：blob 目录、知识服务、作业队列。抓取策略默认严格；
+// 只有 APP_MODE=test 且显式设置 FETCH_ALLOW_LOOPBACK=1 时才放开 127.0.0.1（进程级测试要抓取本机的测试站点）。
+const fetchPolicy: Partial<FetchPolicy> | undefined =
+  mode === "test" && process.env.FETCH_ALLOW_LOOPBACK === "1" ? { isPublicIp: (ip) => ip === "127.0.0.1" || isPublicIp(ip) } : undefined;
+const knowledge = new KnowledgeService({
+  db,
+  blobs: new BlobStore(resolve(dataDir, "blobs")),
+  clock: systemClock,
+  fetchPolicy,
+  log,
+  wake: () => worker.wake(), // worker 在下面创建；wake 只会在它创建之后被调用
+});
+const worker = new JobWorker(db, systemClock, knowledge.handlers(), {
+  log,
+  onFinished: async (job) => {
+    await knowledge.onJobFinished(job).catch((e: Error) => log({ level: "error", event: "knowledge.on_job_finished", error: e.name }));
+    hub.publish({
+      ownerId: job.ownerId,
+      event: "job",
+      data: { id: job.id, kind: job.kind, status: job.status, document_id: (job.input as { documentId?: string }).documentId ?? null },
+    });
+  },
+});
+await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
+worker.start();
+
 const { app } = createApp({
   db,
   clock: systemClock,
   origin: `http://${host}:${port}`,
   isHealthy: () => healthy,
   chat: { conversations, ingress, runtime },
+  knowledge,
+  wakeJobs: () => worker.wake(),
   hub,
   log,
 });
@@ -77,6 +108,7 @@ async function shutdown(signal: string) {
   closing = true;
   log({ level: "info", event: "shutdown", signal });
   await server.close();
+  await worker.stop(); // 等待执行中的作业结束
   await runtime.close(); // 等待任务代码返回，并关闭共享连接
   lock.release();
   process.exit(0);

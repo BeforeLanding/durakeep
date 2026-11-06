@@ -1,74 +1,15 @@
 // T-11：R1 ×20（HTTP 层）：服务在 ingress.after_submit 被杀 → 重启（恢复扫描）→ 客户端重发同一个 client_request_id。
 // 以及 ingress.after_insert：已持久化、尚未交给 Pi 时被杀，重启后由恢复扫描派发，不丢失。
-import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
-import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { guardDb } from "../../packages/db/src/index.ts";
 import { openAppDatabase, PiRuntime, startPi, demoFaux } from "../../packages/runtime-pi/src/index.ts";
-import { repoRoot } from "../support/driver.ts";
+import { freePort, initOwner, loginCookie, post, startServer, type Server } from "../support/server.ts";
 
-const cli = join(repoRoot, "apps/server/src/cli.ts");
-const main = join(repoRoot, "apps/server/src/main.ts");
-const PASSWORD = "an extremely secret passphrase";
 const REPEAT = Number(process.env.REPEAT ?? 20);
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), `durakeep-${p}-`));
-
-async function freePort(): Promise<number> {
-  const s = createServer();
-  await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
-  const port = (s.address() as AddressInfo).port;
-  await new Promise<void>((r) => s.close(() => r()));
-  return port;
-}
-
-type Server = { base: string; proc: ChildProcess; out: () => string; exited: Promise<number | null>; stop(): Promise<void> };
-async function startServer(dataDir: string, port: number, extraEnv: Record<string, string> = {}): Promise<Server> {
-  const proc = spawn(process.execPath, [main], {
-    env: { ...process.env, APP_MODE: "test", DATA_DIR: dataDir, PORT: String(port), ...extraEnv },
-    cwd: repoRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let out = "";
-  proc.stdout!.on("data", (d) => (out += d));
-  proc.stderr!.on("data", (d) => (out += d));
-  const exited = new Promise<number | null>((r) => proc.once("exit", (code) => r(code)));
-  const base = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 20_000;
-  for (;;) {
-    try {
-      if ((await fetch(`${base}/v1/health`)).ok) break;
-    } catch {
-      /* 还没起来 */
-    }
-    if (proc.exitCode !== null) throw new Error(`服务提前退出：${out}`);
-    if (Date.now() > deadline) throw new Error(`服务未就绪：${out}`);
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  return {
-    base,
-    proc,
-    out: () => out,
-    exited,
-    async stop() {
-      if (proc.exitCode === null) {
-        proc.kill();
-        await exited;
-      }
-    },
-  };
-}
-
-const post = (base: string, path: string, cookie: string, body: unknown) =>
-  fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base, Cookie: cookie }, body: JSON.stringify(body) });
-
-async function loginCookie(base: string): Promise<string> {
-  const r = await fetch(`${base}/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: JSON.stringify({ password: PASSWORD }) });
-  expect(r.status).toBe(204);
-  return /sid=[^;]+/.exec(r.headers.get("set-cookie")!)![0];
-}
 
 /** 服务已停止后，在同一个数据库上用 faux 恢复并数出该会话的用户 / 助手条目。 */
 async function inspect(dataDir: string, convId: string, submissionId: string) {
@@ -94,21 +35,6 @@ async function inspect(dataDir: string, convId: string, submissionId: string) {
   } finally {
     await rt.close();
   }
-}
-
-async function initOwner(dir: string) {
-  await new Promise<void>((resolve, reject) => {
-    const p = spawn(process.execPath, [cli, "init", "--timezone=Asia/Shanghai"], {
-      env: { ...process.env, APP_MODE: "test", DATA_DIR: dir },
-      cwd: repoRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let out = "";
-    p.stdout.on("data", (d) => (out += d));
-    p.stderr.on("data", (d) => (out += d));
-    p.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`cli init 失败：${out}`))));
-    p.stdin.end(`${PASSWORD}\n`);
-  });
 }
 
 test(`R1 × ${REPEAT}：Pi 已接纳、HTTP 响应丢失（服务被杀）→ 重启 → 客户端重发 → 只有一个 submission、一条用户消息`, async () => {

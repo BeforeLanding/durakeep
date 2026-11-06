@@ -2,18 +2,21 @@ import { AppError, type Clock, type ErrorCode } from "@durakeep/core";
 import type { ConversationService, IngressService } from "@durakeep/conversations";
 import type { ConversationSnapshot, RuntimePort } from "@durakeep/core";
 import type { SqlDatabase } from "@durakeep/db";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import type { KnowledgeService } from "@durakeep/knowledge";
+import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { AuthService, SESSION_TTL_MS, type Owner } from "./auth.ts";
 import { EventHub } from "./hub.ts";
+import { readJson } from "./http.ts";
 import { presentEntry, presentSnapshot } from "./present.ts";
+import { mountDocumentRoutes } from "./routes-documents.ts";
 import { RateLimiter } from "./rateLimit.ts";
 import { latestThrottle } from "./throttle.ts";
 
 // 06 §1 的错误码 → HTTP 状态
-const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 429 | 500 | 503> = {
+const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 429 | 500 | 502 | 503 | 504> = {
   invalid_request: 400,
   unauthenticated: 401,
   origin_mismatch: 403,
@@ -25,6 +28,10 @@ const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 
   ssrf_blocked: 422,
   unsupported_type: 422,
   time_in_past: 422,
+  robots_disallowed: 422,
+  fetch_failed: 502,
+  fetch_timeout: 504,
+  extract_failed: 422,
   locked: 423,
   rate_limited: 429,
   runtime_unavailable: 503,
@@ -45,6 +52,10 @@ export type AppDeps = {
   chat?: { conversations: ConversationService; ingress: IngressService; runtime: RuntimePort };
   /** 全局事件中心（06 §9.2）；缺省时由 createApp 新建。 */
   hub?: EventHub;
+  /** 资料与作业（T-13）；未提供时不挂载 /v1/documents、/v1/jobs。 */
+  knowledge?: KnowledgeService;
+  /** 入队 / 重试后唤醒 JobWorker。 */
+  wakeJobs?: () => void;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
   sse?: { throttleMs?: number; keepAliveMs?: number };
   /** 覆盖默认限流（每分钟次数），测试用。 */
@@ -87,7 +98,12 @@ export function createApp(deps: AppDeps) {
     log({ level: "info", event: "http", method: c.req.method, path: c.req.path, status: c.res.status, ms: deps.clock.now() - t0 });
   });
 
-  app.use("*", bodyLimit({ maxSize: 1024 * 1024, onError: () => { throw new AppError("too_large", "请求体过大"); } }));
+  const tooLarge = () => {
+    throw new AppError("too_large", "请求体过大");
+  };
+  const smallBody = bodyLimit({ maxSize: 1024 * 1024, onError: tooLarge });
+  const captureBody = bodyLimit({ maxSize: 3 * 1024 * 1024, onError: tooLarge }); // 50 万字符 ≈ 1.5 MB，上传 ≤2 MB
+  app.use("*", (c, next) => (c.req.method === "POST" && c.req.path === "/v1/documents" ? captureBody(c, next) : smallBody(c, next)));
 
   // FR-AUTH-03 / S4：修改类请求检查来源
   const originGuard: MiddlewareHandler = async (c, next) => {
@@ -157,6 +173,7 @@ export function createApp(deps: AppDeps) {
 
   const hub = deps.hub ?? new EventHub();
   if (deps.chat) mountConversationRoutes(app, deps, deps.chat, limiter);
+  if (deps.knowledge) mountDocumentRoutes(app, { db: deps.db, clock: deps.clock, limits: deps.limits, wake: deps.wakeJobs }, deps.knowledge, limiter, LIMITS.capture);
   mountGlobalStream(app, deps, hub);
 
   return { app, auth, limiter, hub };
@@ -315,13 +332,4 @@ function mountGlobalStream(app: Hono<AppEnv>, deps: AppDeps, hub: EventHub) {
       }
     });
   });
-}
-
-async function readJson(c: Context, optional = false): Promise<unknown> {
-  if (optional && (await c.req.raw.clone().text()) === "") return null;
-  try {
-    return await c.req.json();
-  } catch {
-    throw new AppError("invalid_request", "请求体不是有效的 JSON");
-  }
 }

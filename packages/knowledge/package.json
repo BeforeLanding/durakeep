@@ -1,0 +1,19 @@
+{
+  "name": "@durakeep/knowledge",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@durakeep/core": "workspace:*",
+    "@durakeep/db": "workspace:*",
+    "@durakeep/jobs": "workspace:*",
+    "@mozilla/readability": "0.6.0",
+    "linkedom": "0.18.15",
+    "turndown": "7.2.5"
+  },
+  "devDependencies": {
+    "@types/turndown": "5.0.6"
+  }
+}

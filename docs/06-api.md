@@ -30,9 +30,10 @@
 | 404 | `not_found` | 资源不存在，或不属于当前 owner（两种情况不区分） |
 | 409 | `idempotency_conflict` / `conversation_busy` / `revision_conflict` | 冲突 |
 | 413 | `too_large` | 超过大小限制（JSON 请求体默认上限 1 MB；文件上传另有 2 MB 上限，在 T-13 实现） |
-| 422 | `ssrf_blocked` / `unsupported_type` / `time_in_past` | 业务规则拒绝 |
+| 422 | `ssrf_blocked` / `unsupported_type` / `robots_disallowed` / `extract_failed` / `time_in_past` | 业务规则拒绝（采集类错误码也会出现在作业和资料的 `error_code` 里，不一定是 HTTP 响应） |
 | 423 | `locked` | 登录失败次数过多，暂时锁定 |
 | 429 | `rate_limited` | 限流 |
+| 502 / 504 | `fetch_failed` / `fetch_timeout` | 抓取目标网站失败 / 超时（只出现在作业与资料的 `error_code` 里） |
 | 503 | `runtime_unavailable` / `delivery_paused` | Harness 已失效或正在恢复 |
 
 **限流。** 登录：每分钟 10 次；发消息：每分钟 30 次；采集：每分钟 20 次。按 owner 计数，在内存中计算。
@@ -110,7 +111,7 @@ POST /v1/conversations/01J…/messages
 | POST | `/v1/documents` | 采集，见下文 |
 | GET | `/v1/documents/:id` | 详情，含版本列表 |
 | GET | `/v1/documents/:id/versions/:vid/text` | 抽取出的正文（`text/markdown`） |
-| GET | `/v1/documents/:id/versions/:vid/raw` | 原始内容，带 `Content-Disposition: attachment`；HTML 以附件方式返回，不在页面中直接渲染 |
+| GET | `/v1/documents/:id/versions/:vid/raw` | 原始内容，一律 `Content-Type: application/octet-stream` + `Content-Disposition: attachment`（文件名由资料与版本 ID 生成，不含标题）+ `X-Content-Type-Options: nosniff` + `Content-Security-Policy: sandbox`；HTML 不会在页面中渲染 |
 | PATCH | `/v1/documents/:id` | `{ "title"?, "tags"? }`；P2 起支持 `{ "summary" }`（会把 `summary_edited` 置为 1） |
 | POST | `/v1/documents/:id/revoke` | 停止使用 |
 | POST | `/v1/documents/:id/restore` | 恢复使用 |
@@ -125,7 +126,9 @@ POST /v1/conversations/01J…/messages
 { "client_request_id": "…", "type": "text", "title": "会议记录", "text": "…", "tags": [] }
 ```
 
-上传 Markdown 文件使用 `multipart/form-data`，字段为 `file`、`client_request_id`、`tags`（JSON 字符串），文件 ≤2 MB。
+上传 Markdown / 文本文件使用 `multipart/form-data`，字段为 `file`、`client_request_id`、`tags`（JSON 字符串）。只收 `.md`、`.markdown`、`.txt`（其他扩展名 422 `unsupported_type`），必须是 UTF-8（否则 400），文件 ≤2 MB（413 `too_large`）。**文件名只用来生成默认标题（去掉路径与控制字符），永远不参与任何文件路径**（S12）。标题优先级：请求里的 `title` > 文档自己的 `#` 标题（Markdown）> 文件名 > 首行文字。
+
+通用规则：`type` 为 `url`、`text` 或 `markdown`；`tags` 至多 10 个、每个 1–32 个字符，去重保序；正文 ≤50 万字符（413）；采集接口每分钟最多 20 次（按 owner，429）；JSON 请求体上限 3 MB（其他接口 1 MB）。`client_request_id` 必须是 UUID：同 ID 同内容重发返回 200 和第一次的结果，同 ID 不同内容返回 409；**不同 ID 但内容相同的文本**去重到已有的资料（`deduplicated: true`，`job_id` 为 null，包括已停止使用的资料）；URL 同一个 owner 只有一份资料，同一个 URL 同一天只有一个作业，隔天再次采集会重新抓取（内容没变就不产生新版本）。已停止使用 / 正在删除的 URL 资料不能重新采集（400）。
 
 ```json
 202 { "document_id": "…", "job_id": "…", "status": "pending", "deduplicated": false }
@@ -182,6 +185,7 @@ POST /v1/conversations/01J…/messages
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/v1/jobs?status=` | 作业列表 |
+| GET | `/v1/jobs/:id` | 单个作业（`id`、`kind`、`status`、`attempts`、`max_attempts`、`next_attempt_at`（仅排队中）、`error_code`、`error_message`（面向用户，不含堆栈）、`document_id`） |
 | POST | `/v1/jobs/:id/retry` | 只对 `failed` 状态有效：把 attempts 清零，重新排队 |
 | POST | `/v1/jobs/:id/cancel` | 对 `queued` 和 `running` 有效 |
 | GET | `/v1/events?level=&cursor=` | `app_events` 列表 |
