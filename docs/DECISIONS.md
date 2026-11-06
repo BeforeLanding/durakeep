@@ -5,10 +5,10 @@
 | ADR | 决策 | 状态 |
 |---|---|---|
 | [01](#adr-01) | pi-durable 只作为执行内核，藏在 RuntimePort 之后 | 已定 |
-| [02](#adr-02) | 一个 SQLite 文件，`pi_` / `app_` 两套前缀，共用一个连接队列 | 待验证（T-02、T-05） |
+| [02](#adr-02) | 一个 SQLite 文件，`pi_` / `app_` 两套前缀，共用一个连接队列 | 已定（P0：K1、K2、K3） |
 | [03](#adr-03) | 提醒和作业的状态机放在业务库，由宿主调度器驱动 | 已定 |
-| [04](#adr-04) | 写工具用 operation key 实现幂等，声明 `replay: "safe"` | 待验证（T-04） |
-| [05](#adr-05) | 检索结果通过工具进入 transcript；稳定偏好放在确定性 section | 待验证（T-03） |
+| [04](#adr-04) | 写工具用 operation key 实现幂等，声明 `replay: "safe"` | 已定（P0：K4、R2） |
+| [05](#adr-05) | 检索结果通过工具进入 transcript；稳定偏好放在确定性 section | 已定（P0：K5） |
 | [06](#adr-06) | 先做词法检索（Intl.Segmenter + FTS5），embedding 由评测决定 | 已定 |
 | [07](#adr-07) | 入口先在业务层做幂等，再交给 Pi 的 requestId | 已定 |
 | [08](#adr-08) | 不给模型 shell、文件系统或任意网络访问能力 | 已定 |
@@ -45,6 +45,8 @@
 
 **验证（T-02、T-05）。** ① Pi 在含有 `app_` 表的数据库里正常打开、提交、重开；② 业务事务与 Pi run 交错执行 1,000 次，没有死锁，也没有 `ReadAfterWrite` 错误；③ 运行中执行 `VACUUM INTO`，用得到的副本启动后，未完成的 run 能恢复。任何一项失败就回退到 (a)，并在此处记录原因。
 
+**验证结果（P0，2026-11-06）。** 三项全部通过，未触发回退：K1（同文件 `pi_`/`app_` 表并存，关闭重开后两边数据都在）、K2（1,000 次 Pi run 与 1,000 个业务事务交错，无死锁、无 `ReadAfterWrite`，约 1.1 s）、K3（run 进行中 `VACUUM INTO`，副本 `integrity_check=ok`，用副本启动后 run 恢复；×40）。实现须知：连接由 `runtime-pi` 打开（`NodeSqliteDatabase` 来自 chord，受 ADR-01 约束），业务侧只依赖结构性接口 `SqlDatabase`；事务回调内误用外层 db 由 `guardDb` 抛错而不是挂死。详见 [P0-REPORT](spikes/P0-REPORT.md)。
+
 <a id="adr-03"></a>
 
 ## ADR-03 提醒和作业的状态机放在业务库，由宿主调度器驱动
@@ -75,6 +77,8 @@
 
 **验证（T-04）。** ① 工具内能读到 `run_anchor`；读不到时改用 `submission_id`，由入口写入一个 Pi Document，并在这里记录这一改动；② 在“业务已提交、Pi 结果未提交”的位置杀掉进程，重复 20 次，业务效果始终只出现一次。
 
+**验证结果（P0，2026-11-06）。** ① 工具内 `api.snapshot(LiveDoc, …).run.first` 可读，同一 run 内多轮工具调用保持不变，新 run 变化，重启后稳定，不需要 `app.run_meta` 备选方案；该字段类型上可选，读不到时工具必须报错。② 在 `tool.after_business_commit` 杀进程 ×40，业务效果恒为 1 次，重启后重跑返回 `deduplicated`。详见 [P0-REPORT](spikes/P0-REPORT.md)。
+
 <a id="adr-05"></a>
 
 ## ADR-05 检索结果通过工具进入 transcript；稳定偏好放在确定性 section
@@ -90,6 +94,8 @@
 **后果。** 回答质量依赖模型主动去检索。系统提示会要求“回答涉及个人资料或偏好之前先检索”。评测中会单独统计“该检索时没有检索”的比例，超过 10% 时考虑改成强制先检索一轮（入口直接提交一条 `kb_search` 结果）。
 
 **验证（T-03）。** section 的 render 能否异步读取宿主数据；偏好不变时，连续 10 次请求不追加新的 `pi.system` 条目。
+
+**验证结果（P0，2026-11-06）。** render 可以是异步函数并读取宿主数据库；10 次请求后 `pi.system` 只有 1 条，偏好变化后恰好 +1。实现须知：render 每次请求都会执行，所以必须按 `memory_set_revision` 缓存。`configure({ instructions })` 备选方案不需要，保留为后备。同时证实带 `requestId` 的 write 会去重（ADR-03 的提醒事件写入依赖这一点）。详见 [P0-REPORT](spikes/P0-REPORT.md)。
 
 <a id="adr-06"></a>
 

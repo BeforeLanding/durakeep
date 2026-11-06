@@ -197,7 +197,7 @@ export interface RuntimePort {
   writeEvent(conv: string, entry: { kind: `app.${string}`; data: Json }, requestId: string): Promise<void>;
   waitSubmission(id: string, signal?: AbortSignal): Promise<
     | { status: "done"; answerText: string }
-    | { status: "unanswered"; reason: RunFailureReason; detail?: string }>;
+    | { status: "unanswered"; reason: RunFailureReason | string; detail?: string }>;   // reason 不止 RunFailureReason：README 还列出 stale、run_failed、missing_task 等；T-06 只实测过 nothing_to_answer
   abort(conv: string): Promise<void>;
   observe(conv: string, from: ResumeCursor | undefined,
           listener: (snap: ConversationSnapshot) => void): Promise<{ stop(): Promise<void>; cursor(): ResumeCursor }>;
@@ -222,7 +222,7 @@ export type ConversationSnapshot = {
 
 `AppEntry` 的转换规则：`app.user` → user；`pi.assistant` → assistant（解析 `<citations>`，交给 knowledge 包校验）；`pi.tool-result` → tool（只保留名称、成败和摘要）；`app.reminder_fired` → event；`pi.compaction` → 一条“较早的对话已压缩”的分隔线；`pi.system` 不展示。
 
-内部实现：`conversation.watch()` 配合 `ConversationTranscript.merge()`；`observe` 的 `from` 对应 `transcript.resume`。
+内部实现：`conversation.watch()` 配合 `ConversationTranscript.merge()`；`observe` 的 `from` 对应 `transcript.resume`。**1.5.0 实测**：`Submission.wait()` 返回的 `answer` 是助手条目的 **ID**（数字），取回答文本要再用 `conversation.entries({ minEntryId, maxEntryId })` 读出该条目；`pi.live` 里的 `tools` 是数组，部分回答在 `generation.message`，排队数量在 `pi.inbox.items`。`PiRuntime.loadEarlier` 留到 T-12。
 
 ## 8. 后台会话（ADR-10，P2）
 

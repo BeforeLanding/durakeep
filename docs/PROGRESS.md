@@ -55,6 +55,13 @@
 - 意外 / 偏离设计：①R15 与 08 的措辞不一致：工具内崩溃循环的结局是“该工具调用以 restart_limit 错误结果结束、run 继续并完成”，不是 “run 以 restart_limit 结束”；已改 08 R15 行。②backup.mid_vacuum 无法在进程内注入（node:sqlite 同步，语句执行期间事件循环被阻塞）；改为 before/after 两个故障点 + .partial 改名。③R8 用 PRAGMA query_only=ON 模拟存储写入失败（真实 SQLite 报错路径），不是真正的磁盘满 / 只读文件。④K3 只验证了单进程运行中备份；没有测并发写入压力下的备份。
 - 对文档的修改：08 §3 故障点表、08 §4 R15 行。
 
+## 2026-11-06 T-06 RuntimePort 与 P0 报告（出口 G0）
+- 改动：core/runtime-port.ts（RuntimePort 接口、AppEntry、ConversationSnapshot、RuntimeBusy）；runtime-pi：PiRuntime（create、submit、continue、write、wait、observe、abort、usage、backupInto；loadEarlier 留给 T-12）、convert.ts（Pi 条目 → AppEntry）、信封时间 formatEnvelopeTime（ADR-09）；子进程场景 child-port.ts；docs/spikes/P0-REPORT.md；DECISIONS 中 ADR-02/04/05 由“待验证”改为“已定”并补验证结果。
+- 测试：tests/int/runtime-port.test.ts 3 个用例通过（模型确实看到带时间的信封而界面只见原话；同 requestId 重发同一 submission；continue 在无可续时 nothing_to_answer）。R1 ×20、R3 ×20 通过（R3 重启后约 2.1 s 完成，新进程 faux 只被请求 1 次）。最终完整运行：pnpm lint 通过；pnpm test 14 文件 32 用例通过；pnpm test:recovery 3 文件 7 用例（R2、R8、R15、R16、K3、R1、R3，各 ×20）通过。无真实模型调用。
+- 意外 / 偏离设计：Submission.answer 是助手条目的 ID 而不是消息；waitSubmission 的 reason 不止 RunFailureReason；pi.live 的 tools 是数组、部分回答在 generation.message。均已改 05 §7。ADR 决策内容没有被修改（只补了验证结果和实现须知）。
+- 对文档的修改：05 §7；DECISIONS（状态 + 三条验证结果）；README 状态行；09 的 P0 出口标注。
+- 待用户决定（进入 P1 前）：见 P0-REPORT §8——是否 push；CI 从未在远端跑过且未在 Node 22.19.0 上验证；loadEarlier 未实现；T-17 需要个人资料；是否整理“1.5.0 实际行为备忘”。
+
 ---
 
 ## 2026-11-06 开发前文档 v1
