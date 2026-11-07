@@ -4,7 +4,7 @@ import { ConversationDirectory, ConversationService, IngressService } from "@dur
 import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { JobWorker } from "@durakeep/jobs";
-import { BlobStore, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
+import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
 import { appCoreExtension, appGuardExtension, appKnowledgeExtension, demoFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -100,6 +100,7 @@ const { app } = createApp({
   isHealthy: () => healthy,
   chat: { conversations, ingress, runtime },
   knowledge,
+  citations: new CitationValidator(db),
   wakeJobs: () => worker.wake(),
   hub,
   log,

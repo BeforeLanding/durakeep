@@ -140,8 +140,8 @@ interface VectorIndex { upsert(chunkId: number, v: Float32Array): Promise<void>;
 2. 模型回答，正文中用 `[n]` 标注，末尾输出 `<citations>` 块（05 §4.1）。
 3. 服务端把助手条目转换成 `AppEntry` 时，解析引用并逐条校验：
    - **存在**：`chunk_id` 存在，属于当前 owner；
-   - **有效**：所在资料不是 `revoked` 或 `purged`，片段 `active=1`；
-   - **来自这次 run**：这个 `chunk_id` 出现在**同一次 run** 的某个 `kb_search` 或 `kb_get_source` 工具结果中。这样能挡住模型凭空写出、恰好存在的片段 ID。
+   - **有效**：所在资料不是 `revoked` 或 `purged`，片段 `active=1` 且属于资料的当前版本；
+   - **来自这次 run**：这个 `chunk_id` 出现在**同一次 run** 的某个 `kb_search` 或 `kb_get_source` 工具结果中。这样能挡住模型凭空写出、恰好存在的片段 ID。依据是工具结果的 `details.chunk_ids`（由工具写入，不含资料文本），不是输出文本；“同一次 run”指上一个非工具调用的助手回答之后的所有条目（插话不截断，followUp 算新 run）。校验在展示时进行、不存储，所以停止使用 / 恢复立即生效。
 4. 校验不通过的引用 `valid=false`，前端标红。正文中出现了 `[n]` 却没有对应条目的，同样标红。
 
 引用校验只能证明“引用的东西真实存在、而且模型确实看过”，不能证明它支持那句话。语义上是否支持，由评测时人工判定（见 08 §5）。

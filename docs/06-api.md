@@ -101,7 +101,7 @@ POST /v1/conversations/01J…/messages
 { "id": "…", "type": "compaction", "at": … }
 ```
 
-如果引用的片段已经停止使用、已删除或不存在，`valid` 为 `false`，并附带 `invalid_reason`（`revoked` / `purged` / `missing`）。前端对这样的引用标红，不提供跳转。
+如果引用的片段已经停止使用、已删除或不存在，`valid` 为 `false`，并附带 `invalid_reason`（`revoked` / `purged` / `missing` / `superseded`（资料已有新版本）/ `not_in_run`（本次 run 没有检索到这个片段）/ `unresolved`（正文有 `[n]` 却没有对应条目））。无效引用不带标题、位置等任何资料信息（别人的片段与不存在的片段同为 `missing`）。校验在每次展示时重新进行、不存储：停止使用 / 恢复后，下一次快照里的 `valid` 立即变化。前端对这样的引用标红，不提供跳转。
 
 ## 4. 资料
 

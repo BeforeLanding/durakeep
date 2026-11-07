@@ -1,5 +1,5 @@
 // Pi 条目 → 应用视图 AppEntry（05 §7 的转换规则）。纯函数，不触碰存储。
-import type { AppEntry, ConversationSnapshot, Json, RunFailureReason } from "@durakeep/core";
+import { parseAnswer, stripCitationsForDisplay, type AppEntry, type ConversationSnapshot, type Json, type RunFailureReason } from "@durakeep/core";
 
 type Block = { type?: string; text?: string };
 type ModelMessage = { role?: string; content?: unknown; toolName?: string; isError?: boolean };
@@ -25,8 +25,10 @@ export function toAppEntry(e: PiEntryLike): AppEntry | undefined {
     }
     case "pi.user":
       return { id, kind: "user", text: textOf(msg?.content) };
-    case "pi.assistant":
-      return { id, kind: "assistant", text: textOf(msg?.content) };
+    case "pi.assistant": {
+      const p = parseAnswer(textOf(msg?.content));
+      return { id, kind: "assistant", text: p.text, ...(p.citations.length > 0 || p.markers.length > 0 ? { citations: p.citations, markers: p.markers } : {}) };
+    }
     case "pi.tool-result":
       return { id, kind: "tool", name: msg?.toolName ?? "?", ok: msg?.isError !== true };
     case "pi.compaction":
@@ -50,7 +52,7 @@ type LiveLike = {
 export function toSnapshotLive(docs: Readonly<Record<string, unknown>>): ConversationSnapshot["live"] {
   const live = (docs["pi.live"] ?? {}) as LiveLike;
   const inbox = (docs["pi.inbox"] ?? {}) as { items?: unknown[] };
-  const partial = textOf(live.generation?.message?.content);
+  const partial = stripCitationsForDisplay(textOf(live.generation?.message?.content));
   return {
     running: live.run !== undefined,
     ...(partial !== "" ? { partialText: partial } : {}),
@@ -64,4 +66,26 @@ export function toSnapshotLive(docs: Readonly<Record<string, unknown>>): Convers
       : {}),
     queued: (inbox.items ?? []).length,
   };
+}
+
+/** 产出 chunk id 的工具：它们的 details.chunk_ids 就是“这次 run 里模型见过的片段”。 */
+export const SOURCE_TOOLS: ReadonlySet<string> = new Set(["kb_search", "kb_get_source"]);
+
+/**
+ * 从某条助手条目往前回溯（entriesDescending：从它的前一条开始，ID 递减），收集同一次 run 里 kb_search / kb_get_source
+ * 的结果里出现过的 chunk id。run 的边界 = 上一条“不是在调用工具”的助手条目（stopReason 不是 toolUse）：
+ * 追问（followUp）在上一个回答之后才开始，所以属于新的 run；插话（steer）发生在 run 内部，不会截断。
+ * 以 details 为准而不是输出文本：details 由工具写入，不受资料内容影响。返回 true 表示已经碰到上一个 run 的结尾。
+ */
+export function collectRunChunkIds(entriesDescending: readonly PiEntryLike[], into: Set<number>): boolean {
+  for (const e of entriesDescending) {
+    const m = e.model?.[0] as { role?: string; stopReason?: string; toolName?: string; isError?: boolean; details?: { chunk_ids?: unknown } } | undefined;
+    if (e.kind === "pi.assistant" && m?.stopReason !== "toolUse") return true;
+    if (e.kind === "pi.reset") return true;
+    if (e.kind === "pi.tool-result" && m?.toolName && SOURCE_TOOLS.has(m.toolName) && m.isError !== true) {
+      const ids = m.details?.chunk_ids;
+      if (Array.isArray(ids)) for (const id of ids) if (typeof id === "number") into.add(id);
+    }
+  }
+  return false;
 }

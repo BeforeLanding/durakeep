@@ -1,8 +1,8 @@
 import { AppError, type Clock, type ErrorCode } from "@durakeep/core";
 import type { ConversationService, IngressService } from "@durakeep/conversations";
-import type { ConversationSnapshot, RuntimePort } from "@durakeep/core";
+import type { AppEntry, ConversationSnapshot, RuntimePort } from "@durakeep/core";
 import type { SqlDatabase } from "@durakeep/db";
-import type { KnowledgeService } from "@durakeep/knowledge";
+import type { CitationValidator, KnowledgeService } from "@durakeep/knowledge";
 import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
@@ -10,7 +10,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { AuthService, SESSION_TTL_MS, type Owner } from "./auth.ts";
 import { EventHub } from "./hub.ts";
 import { readJson } from "./http.ts";
-import { presentEntry, presentSnapshot } from "./present.ts";
+import { presentEntry, presentSnapshot, type CitationMap } from "./present.ts";
 import { mountDocumentRoutes } from "./routes-documents.ts";
 import { RateLimiter } from "./rateLimit.ts";
 import { latestThrottle } from "./throttle.ts";
@@ -54,6 +54,8 @@ export type AppDeps = {
   hub?: EventHub;
   /** 资料与作业（T-13）；未提供时不挂载 /v1/documents、/v1/jobs。 */
   knowledge?: KnowledgeService;
+  /** 引用校验（T-16）；未提供时助手条目不带引用信息。 */
+  citations?: CitationValidator;
   /** 入队 / 重试后唤醒 JobWorker。 */
   wakeJobs?: () => void;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
@@ -187,6 +189,17 @@ function mountConversationRoutes(
 ) {
   const limits = deps.limits;
   const { conversations, ingress, runtime } = chat;
+  /** 每次展示都重新校验引用（不存储结果）：资料被停止使用 / 恢复后，下一次快照里的 valid 立即变化。 */
+  const validateCitations = async (ownerId: string, entries: AppEntry[]): Promise<CitationMap> => {
+    const out = new Map<string, Awaited<ReturnType<CitationValidator["validate"]>>>();
+    if (!deps.citations) return out;
+    for (const e of entries) {
+      if (e.kind === "assistant" && ((e.citations?.length ?? 0) > 0 || (e.markers?.length ?? 0) > 0)) {
+        out.set(e.id, await deps.citations.validate(ownerId, e.citations ?? [], e.markers ?? []));
+      }
+    }
+    return out;
+  };
   const throttleMs = deps.sse?.throttleMs ?? 100;
   const keepAliveMs = deps.sse?.keepAliveMs ?? 15_000;
   const present = (c: { id: string; title: string; createdAt: number; lastActiveAt: number; archived: boolean }) => ({
@@ -248,23 +261,27 @@ function mountConversationRoutes(
       throw new AppError("invalid_request", "limit 需为 1–100 的整数", { issues: [{ path: "limit" }] });
     }
     const page = await runtime.loadEarlier(conv.piConversationId, before, limit);
-    return c.json({ entries: page.entries.map(presentEntry), has_earlier: page.hasEarlier });
+    const cites = await validateCitations(c.get("owner").id, page.entries);
+    return c.json({ entries: page.entries.map((e) => presentEntry(e, cites)), has_earlier: page.hasEarlier });
   });
 
   // 会话流（06 §9.1）：每次提交推送一次完整快照，100 ms 节流；Last-Event-ID 续传
   app.get("/v1/conversations/:id/stream", async (c) => {
-    const conv = await conversations.get(c.get("owner").id, c.req.param("id")); // 不属于自己 → 404，不开流
+    const owner = c.get("owner");
+    const conv = await conversations.get(owner.id, c.req.param("id")); // 不属于自己 → 404，不开流
     const lastId = c.req.header("Last-Event-ID");
     const from = lastId !== undefined && /^\d+$/.test(lastId) ? lastId : undefined; // 无效游标 → 最新窗口
     return streamSSE(c, async (stream) => {
       let observer: Awaited<ReturnType<RuntimePort["observe"]>> | undefined;
       let chain: Promise<void> = Promise.resolve();
       const throttle = latestThrottle<ConversationSnapshot>(deps.clock, throttleMs, (snap) => {
-        chain = chain.then(() =>
-          stream
-            .writeSSE({ event: "snapshot", ...(snap.cursor !== undefined ? { id: snap.cursor } : {}), data: JSON.stringify(presentSnapshot(snap)) })
-            .catch(() => {}),
-        );
+        chain = chain.then(async () => {
+          // 在发送时才校验：节流之后只校验真正要发的那一份快照，并且是发送那一刻的最新状态
+          const cites = await validateCitations(owner.id, snap.entries).catch(() => new Map() as CitationMap);
+          await stream
+            .writeSSE({ event: "snapshot", ...(snap.cursor !== undefined ? { id: snap.cursor } : {}), data: JSON.stringify(presentSnapshot(snap, cites)) })
+            .catch(() => {});
+        });
       });
       try {
         observer = await runtime.observe(conv.piConversationId, from, (s) => throttle.push(s));

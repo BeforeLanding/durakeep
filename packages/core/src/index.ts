@@ -14,3 +14,4 @@ export {
   type RuntimePort,
   type UsageSummary,
 } from "./runtime-port.ts";
+export { parseAnswer, stripCitationsForDisplay, type ParsedAnswer, type RawCitation } from "./citations.ts";

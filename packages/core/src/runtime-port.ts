@@ -1,4 +1,5 @@
 // RuntimePort（ADR-01、05 §7）：业务与 HTTP 层看到的唯一运行时接口。实现在 packages/runtime-pi。
+import type { RawCitation } from "./citations.ts";
 import type { Json } from "./canonicalJson.ts";
 
 /** 与 Pi 的 RunFailureReason 对应；core 里重述一份，业务代码不 import Pi 的类型。 */
@@ -19,7 +20,16 @@ export type ResumeCursor = string;
 
 export type AppEntry =
   | { id: string; kind: "user"; text: string; at?: number; tz?: string }
-  | { id: string; kind: "assistant"; text: string }
+  | {
+      id: string;
+      kind: "assistant";
+      /** 已去掉 <citations> 块的可见正文。 */
+      text: string;
+      /** 回答里声明的引用（未校验）；inRun 由运行时填写。校验在 CitationValidator 里、在展示时进行。 */
+      citations?: RawCitation[];
+      /** 正文里出现的 [n] 标记。 */
+      markers?: number[];
+    }
   | { id: string; kind: "tool"; name: string; ok: boolean; summary?: string }
   | { id: string; kind: "event"; eventKind: string; data: Json }
   | { id: string; kind: "compaction" };

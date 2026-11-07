@@ -13,7 +13,7 @@ import {
 } from "@durakeep/core";
 import { backupInto as dbBackupInto } from "@durakeep/db";
 import { ConversationBusy, ConversationTranscript, type Conversation } from "@earendil-works/pi-durable";
-import { toAppEntry, toSnapshotLive, type PiEntryLike } from "./convert.ts";
+import { collectRunChunkIds, toAppEntry, toSnapshotLive, type PiEntryLike } from "./convert.ts";
 import { context, type PiHandle } from "./start.ts";
 
 export type PiRuntimeOptions = {
@@ -54,6 +54,39 @@ export class PiRuntime implements RuntimePort {
 
   resume(): void {
     this.#pi.harness.resume();
+  }
+
+  /** 助手条目一旦写入就不会变，所以“同一次 run 里见过哪些片段”只算一次（有界缓存）。 */
+  readonly #runIdsCache = new Map<string, Set<number>>();
+
+  async #runChunkIds(c: Conversation, entryId: number): Promise<Set<number>> {
+    const key = `${String(c.id)}:${entryId}`;
+    const hit = this.#runIdsCache.get(key);
+    if (hit) return hit;
+    const ids = new Set<number>();
+    let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
+    for (;;) {
+      const page = await c.entries(
+        cursor === undefined ? { maxEntryId: (entryId - 1) as never, order: "descending" as const } : { order: "descending" as const },
+        50,
+        cursor,
+        context,
+      );
+      if (collectRunChunkIds(page.items as unknown as PiEntryLike[], ids) || page.next === undefined) break;
+      cursor = page.next;
+    }
+    if (this.#runIdsCache.size >= 1000) this.#runIdsCache.clear();
+    this.#runIdsCache.set(key, ids);
+    return ids;
+  }
+
+  /** 给带引用的助手条目填写 inRun：引用的 chunk 是否出现在同一次 run 的工具结果里。 */
+  async #markInRun(c: Conversation, entries: AppEntry[]): Promise<void> {
+    for (const e of entries) {
+      if (e.kind !== "assistant" || !e.citations || e.citations.length === 0) continue;
+      const seen = await this.#runChunkIds(c, Number(e.id));
+      for (const cite of e.citations) cite.inRun = cite.chunkId !== null && seen.has(cite.chunkId);
+    }
   }
 
   async #conv(id: string): Promise<Conversation> {
@@ -145,7 +178,7 @@ export class PiRuntime implements RuntimePort {
     const c = await this.#conv(conv);
     const transcript = new ConversationTranscript((query, limit, ctx) => c.entries(query, limit, undefined, ctx));
     const watch = await c.watch(context, from !== undefined ? { from: Number(from) as never } : undefined);
-    const emit = (view: Parameters<typeof transcript.merge>[0]) => {
+    const emit = async (view: Parameters<typeof transcript.merge>[0]) => {
       const merged = transcript.merge(view);
       const entries: AppEntry[] = [];
       let hasEarlier = false;
@@ -156,6 +189,7 @@ export class PiRuntime implements RuntimePort {
           if (e) entries.push(e);
         }
       }
+      await this.#markInRun(c, entries).catch(() => {}); // 标注失败（如 Harness 正在关闭）时保持 inRun=false，宁可标红也不放行
       const resume = transcript.resume?.from;
       listener({
         ...(resume !== undefined ? { cursor: String(resume) } : {}),
@@ -164,10 +198,14 @@ export class PiRuntime implements RuntimePort {
         hasEarlier,
       });
     };
-    emit(watch.value);
+    // 初始快照与后续快照用同一条串行链：先 start 再发初始快照，中间不留 await 间隙（否则间隙里的提交可能被漏掉），且保证顺序
+    let chain: Promise<void> = Promise.resolve();
+    const enqueue = (view: Parameters<typeof transcript.merge>[0]) => (chain = chain.then(() => emit(view)));
+    const initial = enqueue(watch.value);
     watch.start(async (call) => {
-      if (call.kind === "value") emit(call.value);
+      if (call.kind === "value") await enqueue(call.value);
     });
+    await initial;
     return {
       stop: async () => void (await watch.stop()),
       cursor: () => {
@@ -206,7 +244,9 @@ export class PiRuntime implements RuntimePort {
       if (hasEarlier || page.next === undefined) break;
       cursor = page.next;
     }
-    return { entries: out.reverse(), hasEarlier };
+    const entries = out.reverse();
+    await this.#markInRun(c, entries);
+    return { entries, hasEarlier };
   }
 
   async usage(): Promise<UsageSummary> {

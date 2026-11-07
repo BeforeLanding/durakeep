@@ -137,6 +137,13 @@
   ⑦本地完整的故障注入套件现在要约 9 分钟（CI 的 Windows 约 10 分钟以上），随任务增多会继续变慢；见“已知缺口”。
 - 对文档的修改：05 §4.1（实现说明）、§5（工具目录的参数与返回、共同行为、<source> 的实际格式）；07 §3.2（实现与已知代价）。
 
+## 2026-11-07 T-16 引用解析与校验
+- 改动：core/citations.ts（parseAnswer：最后一个 <citations> 块生效、`[n] chunk:ID` 行、宽松行 → chunkId=null、正文 [n] 标记；stripCitationsForDisplay 流式时隐藏未写完的块）；AppEntry 助手条目带 citations/markers；runtime-pi convert/runtime（回溯本次 run 的 kb_search/kb_get_source 的 details.chunk_ids，标注 inRun；observe 异步并串行）；knowledge/citations.ts（CitationValidator）；server：SSE 与 entries 在发送时校验并按 06 线格式输出。无新增依赖。
+- 测试：pnpm vitest unit：core 引用 7、runtime-pi convert 5 通过；tests/int/citations.test.ts 8 通过（校验器七种结果、无效引用不泄露元数据、正常回答、**R6**：生成期间停止使用 → revoked，恢复后又有效，回答后停止使用立即变红；**伪造但真实存在的 chunk → not_in_run**；跨 run；get_source 相邻片段与合并命中；别人的 / 不存在 / 无法解析 / 未列出标记）。最终完整回归：pnpm lint 通过；pnpm test 38 文件 206 用例通过；pnpm test:recovery 7 文件 14 用例通过。
+- 设计决定：①以工具结果 details 而非文本判断“见过”，文本会受资料内容影响；②run 范围 = 上一个非工具调用的助手回答之后（steer 不截断，followUp 是新 run）；③校验在展示时进行、不存储；④除 06 原有三种原因外新增 superseded / not_in_run / unresolved，已更新 06 §3、07 §4.1。
+- 意外：首轮测试 4 个失败均为测试数据问题（样本太短只有 1 个块；查询词与诱饵资料共享字符被 OR 检索命中）。
+- 已知缺口：引用只证明“存在且模型见过”，语义支持仍靠 T-19 人工评估。
+
 ---
 
 ## 2026-11-06 开发前文档 v1
