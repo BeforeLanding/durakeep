@@ -116,7 +116,7 @@ POST /v1/conversations/01J…/messages
 | POST | `/v1/documents/:id/revoke` | 停止使用 |
 | POST | `/v1/documents/:id/restore` | 恢复使用 |
 | DELETE | `/v1/documents/:id` | P2：彻底删除，返回 202 和 `job_id` |
-| GET | `/v1/chunks/:id` | 引用悬停时用：返回片段文本、所属资料和位置；校验 owner 和 `active` |
+| GET | `/v1/chunks/:id` | 引用悬停时用：返回 `{ id, document_id, version_id, title, loc, char_start, char_end, text }`；校验 owner 和 `active`，不满足一律 404 |
 | GET | `/v1/search?q=&top_k=10` | 调试和资料页搜索；与 `kb_search` 使用同一条检索链路 |
 
 **采集：**
@@ -244,4 +244,4 @@ event: unread         data: {"count":3}
 | `pnpm cli backup` | 服务运行时通过 HTTP 调用备份；服务停止时直接执行 |
 | `pnpm cli restore <file>` | 要求服务已停止；恢复后把投递设为暂停 |
 | `pnpm cli export <dir>` | 离线导出 |
-| `pnpm demo` | 演示模式：faux 模型、临时数据目录、预置样例资料、固定口令 `demo` |
+| `pnpm demo` | 演示模式：先构建前端，再以脚本化 faux 模型（检索 → 带引用作答）、临时数据目录、3 篇样例资料启动；固定口令 `demodemo`（口令至少 8 个字符）。零费用 |

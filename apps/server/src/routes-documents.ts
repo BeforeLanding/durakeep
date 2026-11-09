@@ -163,6 +163,31 @@ export function mountDocumentRoutes(
   app.post("/v1/documents/:id/revoke", async (c) => c.json(presentDoc(await knowledge.revoke(c.get("owner").id, c.req.param("id")))));
   app.post("/v1/documents/:id/restore", async (c) => c.json(presentDoc(await knowledge.restore(c.get("owner").id, c.req.param("id")))));
 
+  // 引用悬停（06 §4）：返回片段文本与出处；owner 与 active 都校验，否则一律 404
+  app.get("/v1/chunks/:id", async (c) => {
+    const id = c.req.param("id");
+    const row = /^\d+$/.test(id)
+      ? await deps.db.get<{ id: number; document_id: string; version_id: string; heading_path: string; char_start: number; char_end: number; text: string; title: string }>(
+          `SELECT k.id, k.document_id, k.version_id, k.heading_path, k.char_start, k.char_end, k.text, d.title
+             FROM app_chunks k JOIN app_documents d ON d.id = k.document_id AND d.owner_id = k.owner_id
+            WHERE k.owner_id = ? AND k.id = ? AND k.active = 1`,
+          c.get("owner").id,
+          Number(id),
+        )
+      : undefined;
+    if (!row) throw new AppError("not_found", "资源不存在");
+    return c.json({
+      id: row.id,
+      document_id: row.document_id,
+      version_id: row.version_id,
+      title: row.title,
+      loc: row.heading_path,
+      char_start: row.char_start,
+      char_end: row.char_end,
+      text: row.text,
+    });
+  });
+
   // 作业（06 §7）
   app.get("/v1/jobs", async (c) => {
     const status = c.req.query("status");

@@ -23,7 +23,9 @@
 
 ```bash
 pnpm install
-pnpm dev                 # server + web，APP_MODE=dev，读取 DEEPSEEK_API_KEY
+pnpm dev                 # 服务（APP_MODE=dev，读取 DEEPSEEK_API_KEY）；若已 pnpm web:build，同时托管前端
+pnpm web:build           # 构建前端到 apps/web/dist
+pnpm web:dev             # 前端开发服务器（:5173，代理 /v1 到 :4777）
 pnpm demo                # faux 模型 + 样例数据，零费用
 pnpm test                # unit + int（零费用）
 pnpm test:recovery       # 子进程故障注入

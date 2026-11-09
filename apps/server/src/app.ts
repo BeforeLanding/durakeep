@@ -13,6 +13,7 @@ import { readJson } from "./http.ts";
 import { presentEntry, presentSnapshot, type CitationMap } from "./present.ts";
 import { mountDocumentRoutes } from "./routes-documents.ts";
 import { RateLimiter } from "./rateLimit.ts";
+import { staticFiles } from "./static.ts";
 import { latestThrottle } from "./throttle.ts";
 
 // 06 §1 的错误码 → HTTP 状态
@@ -56,6 +57,8 @@ export type AppDeps = {
   knowledge?: KnowledgeService;
   /** 引用校验（T-16）；未提供时助手条目不带引用信息。 */
   citations?: CitationValidator;
+  /** 前端构建产物目录；提供时托管静态文件（非 /v1 的 GET）。 */
+  staticDir?: string;
   /** 入队 / 重试后唤醒 JobWorker。 */
   wakeJobs?: () => void;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
@@ -177,6 +180,7 @@ export function createApp(deps: AppDeps) {
   if (deps.chat) mountConversationRoutes(app, deps, deps.chat, limiter);
   if (deps.knowledge) mountDocumentRoutes(app, { db: deps.db, clock: deps.clock, limits: deps.limits, wake: deps.wakeJobs }, deps.knowledge, limiter, LIMITS.capture);
   mountGlobalStream(app, deps, hub);
+  if (deps.staticDir) app.use("*", staticFiles(deps.staticDir));
 
   return { app, auth, limiter, hub };
 }

@@ -5,15 +5,19 @@ import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { JobWorker } from "@durakeep/jobs";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
-import { appCoreExtension, appGuardExtension, appKnowledgeExtension, demoFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
-import { mkdirSync } from "node:fs";
+import { appCoreExtension, appGuardExtension, appKnowledgeExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
+import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { AuthService } from "./auth.ts";
+import { DEMO_DOCS } from "./demoData.ts";
 import { resolve } from "node:path";
 import { createApp, type LogEvent } from "./app.ts";
 import { EventHub } from "./hub.ts";
 import { listen } from "./listen.ts";
 
 const mode = readAppMode();
-const dataDir = resolve(process.env.DATA_DIR ?? "data");
+// demo：临时数据目录（除非显式指定），固定口令 demo
+const dataDir = resolve(process.env.DATA_DIR ?? (mode === "demo" ? mkdtempSync(resolve(tmpdir(), "durakeep-demo-")) : "data"));
 const port = Number(process.env.PORT ?? 4777);
 const host = "127.0.0.1"; // 只监听 loopback（FR-AUTH-03）
 const chatModel = process.env.CHAT_MODEL ?? "deepseek-flash";
@@ -36,6 +40,9 @@ const raw = await openAppDatabase(resolve(dataDir, "app.sqlite"));
 const db = guardDb(raw);
 await migrate(db);
 
+if (mode === "demo" && !(await db.get("SELECT id FROM app_owners LIMIT 1"))) {
+  await new AuthService(db, systemClock).initOwner({ password: "demodemo", timezone: "Asia/Shanghai" });
+}
 const hub = new EventHub();
 let healthy = true;
 
@@ -73,7 +80,7 @@ const useFaux = mode === "test" || mode === "demo";
 const pi = await startPi({
   mode,
   db: raw,
-  ...(useFaux ? { faux: demoFaux() } : {}),
+  ...(useFaux ? { faux: mode === "demo" ? demoScriptedFaux() : demoFaux() } : {}),
   extensions: [appCoreExtension(), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appGuardExtension({ conversations: directory })],
   onReport: (r) => log({ level: r.kind === "storage_failed" ? "error" : "warn", event: "pi.report", kind: r.kind }),
   onFatal: (error) => {
@@ -93,6 +100,7 @@ const ingress = new IngressService(db, runtime, systemClock, conversations, log)
 await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
 
+const webDist = resolve(import.meta.dirname, "../../web/dist");
 const { app } = createApp({
   db,
   clock: systemClock,
@@ -103,8 +111,16 @@ const { app } = createApp({
   citations: new CitationValidator(db),
   wakeJobs: () => worker.wake(),
   hub,
+  ...(existsSync(webDist) ? { staticDir: webDist } : {}),
   log,
 });
+if (mode === "demo") {
+  const owner = (await db.get<{ id: string }>("SELECT id FROM app_owners LIMIT 1"))!;
+  for (const [i, d] of DEMO_DOCS.entries()) {
+    await knowledge.captureText(owner.id, { clientRequestId: `00000000-0000-4000-8000-00000000000${i}`, kind: "markdown", title: d.title, text: d.text, tags: d.tags }).catch(() => {});
+  }
+  log({ level: "info", event: "demo.ready", hint: "口令 demodemo" });
+}
 const server = await listen(app.fetch, { host, port });
 log({ level: "info", event: "listening", port: server.port, mode });
 
