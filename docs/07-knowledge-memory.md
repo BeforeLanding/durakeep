@@ -213,7 +213,7 @@ interface VectorIndex { upsert(chunkId: number, v: Float32Array): Promise<void>;
 - 题目构成：30 道有答案（其中至少 6 道是两字词问题、6 道是同义改写），10 道没有答案，10 道考查版本或冲突。语料使用 20–50 篇用户授权的资料。
 - 判定：`relevant` 用“资料 + 包含的文本”来指定，而不是片段 ID，这样调整分块参数后评测集仍然可以用。
 - 指标：Recall@10、MRR，以及按标签分组的召回率。
-- 运行：`pnpm eval:retrieval`，输出 `tests/retrieval/reports/<日期>.md`。
+- 运行：`EVAL_CORPUS_DIR=<语料目录> pnpm eval:retrieval`，输出 `tests/retrieval/reports/<日期>.md`。语料是用户的授权资料，不入库；`tests/retrieval/corpus.json` 给出语料键与文件名的对应，题目自检会确认每个 `contains` 确实出现在对应资料里。
 
 ### 7.2 回答评测（付费，每次运行都需要用户批准）
 

@@ -1,0 +1,40 @@
+{"id":"q01","type":"answerable","query":"死锁","relevant":[{"doc":"os","contains":"资源有序分配法"}],"tags":["两字词"]}
+{"id":"q02","type":"answerable","query":"fork 之后为什么不立刻复制内存","relevant":[{"doc":"os","contains":"操作系统才会去复制物理内存"}],"tags":["同义"]}
+{"id":"q03","type":"answerable","query":"TLB 未命中是不是一定缺页","relevant":[{"doc":"os","contains":"TLB未命中不等于缺页"}],"tags":[]}
+{"id":"q04","type":"answerable","query":"页面置换算法有哪些","relevant":[{"doc":"os","contains":"最近最久未使用的置换算法"}],"tags":[]}
+{"id":"q05","type":"answerable","query":"mmap 和 read 读文件有什么差别","relevant":[{"doc":"os","contains":"文件映射到进程的虚拟地址空间"}],"tags":[]}
+{"id":"q06","type":"answerable","query":"没有亲缘关系的两个进程怎么通信","relevant":[{"doc":"os","contains":"命名管道突破了匿名管道只能在亲缘关系进程间的通信限制"}],"tags":["同义"]}
+{"id":"q07","type":"answerable","query":"边缘触发模式为什么要配合非阻塞 IO","relevant":[{"doc":"os","contains":"循环读到EAGAIN"}],"tags":[]}
+{"id":"q08","type":"answerable","query":"中断","relevant":[{"doc":"os","contains":"中断让CPU不必一直轮询设备"}],"tags":["两字词"]}
+{"id":"q09","type":"answerable","query":"单核 CPU 能不能做到并发","relevant":[{"doc":"os","contains":"单核CPU也可以通过任务切换实现并发"}],"tags":[]}
+{"id":"q10","type":"answerable","query":"协程","relevant":[{"doc":"os","contains":"协程是由语言运行时或协程库在用户态调度的执行单元"}],"tags":["两字词"]}
+{"id":"q11","type":"answerable","query":"握手","relevant":[{"doc":"net","contains":"建立连接是通过三次握手来进行的"}],"tags":["两字词"]}
+{"id":"q12","type":"answerable","query":"502 和 504 有什么区别","relevant":[{"doc":"net","contains":"nginx超过自己配置的等待时间"}],"tags":[]}
+{"id":"q13","type":"answerable","query":"301 和 302 分别表示什么","relevant":[{"doc":"net","contains":"永久重定向，表示资源以后应该使用新的URL访问"}],"tags":[]}
+{"id":"q14","type":"answerable","query":"POST 请求被重定向之后会变成什么方法","relevant":[{"doc":"net","contains":"307临时重定向"}],"tags":["同义"]}
+{"id":"q15","type":"answerable","query":"DNS 解析的流程","relevant":[{"doc":"net","contains":"本地域名服务器收到客户端的请求后"}],"tags":[]}
+{"id":"q16","type":"answerable","query":"登录状态是存在浏览器里还是服务器里","relevant":[{"doc":"net","contains":"Session的数据存储在服务器端"}],"tags":["同义"]}
+{"id":"q17","type":"answerable","query":"CSRF 怎么防范","relevant":[{"doc":"net","contains":"CSRFToken：由服务端生成难以猜测的令牌"}],"tags":[]}
+{"id":"q18","type":"answerable","query":"拥塞控制的目的是什么","relevant":[{"doc":"net","contains":"控制的目的就是避免「发送方」的数据填满整个网络"}],"tags":[]}
+{"id":"q19","type":"answerable","query":"服务端积累了很多 CLOSE_WAIT 连接是怎么回事","relevant":[{"doc":"net","contains":"CLOSE_WAIT表示对端已经关闭发送方向"}],"tags":["同义"]}
+{"id":"q20","type":"answerable","query":"粘包","relevant":[{"doc":"net","contains":"一次send不对应一次read"}],"tags":["两字词"]}
+{"id":"q21","type":"answerable","query":"跨域","relevant":[{"doc":"net","contains":"协议、主机或端口任意一个不同，就属于不同源"}],"tags":["两字词"]}
+{"id":"q22","type":"answerable","query":"DDoS 攻击是怎么回事","relevant":[{"doc":"net","contains":"通过大规模互联网流量淹没目标服务器"}],"tags":[]}
+{"id":"q23","type":"answerable","query":"反转链表用什么思路","relevant":[{"doc":"dsa","contains":"用三个指针prev、curr、next依次调转每个节点的指向"}],"tags":[]}
+{"id":"q24","type":"answerable","query":"判断一个元素存在但其实没加入的错误叫什么","relevant":[{"doc":"dsa","contains":"假阳性"}],"tags":["同义"]}
+{"id":"q25","type":"answerable","query":"LRU 缓存怎么实现","relevant":[{"doc":"dsa","contains":"哈希表+双向链表结合"}],"tags":[]}
+{"id":"q26","type":"answerable","query":"B+树的数据存放在哪","relevant":[{"doc":"dsa","contains":"所有数据都在叶子节点"}],"tags":[]}
+{"id":"q27","type":"answerable","query":"哈希冲突","relevant":[{"doc":"dsa","contains":"不同的key经过哈希函数后可能映射到同一个下标"}],"tags":["两字词"]}
+{"id":"q28","type":"answerable","query":"用数组存堆时，左右孩子的下标怎么算","relevant":[{"doc":"dsa","contains":"左子节点在(2i+1)的位置"}],"tags":["同义"]}
+{"id":"q29","type":"answerable","query":"单调栈适合解决什么问题","relevant":[{"doc":"dsa","contains":"下一个更大元素"}],"tags":[]}
+{"id":"q30","type":"answerable","query":"Agent 面试专题讲了哪几种设计范式","relevant":[{"doc":"agent","contains":"ReAct、Plan-and-Execute、Reflection"}],"tags":[]}
+{"id":"q31","type":"unanswerable","query":"我收藏的文章里有没有讲番茄钟的"}
+{"id":"q32","type":"unanswerable","query":"区块链的共识算法有哪些"}
+{"id":"q33","type":"unanswerable","query":"量子计算怎么做纠错"}
+{"id":"q34","type":"unanswerable","query":"红烧肉怎么做才好吃"}
+{"id":"q35","type":"unanswerable","query":"Kubernetes 滚动升级怎么配置"}
+{"id":"q36","type":"unanswerable","query":"梯度下降的学习率怎么调"}
+{"id":"q37","type":"unanswerable","query":"Redis 的 AOF 重写是什么"}
+{"id":"q38","type":"unanswerable","query":"Docker 镜像分层是怎么回事"}
+{"id":"q39","type":"unanswerable","query":"文艺复兴时期有哪些代表人物"}
+{"id":"q40","type":"unanswerable","query":"MySQL 的 MVCC 是怎么实现的"}

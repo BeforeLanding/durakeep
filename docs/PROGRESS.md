@@ -146,6 +146,21 @@
 
 ---
 
+## 2026-11-09 T-17 检索评测集与脚本
+- 改动：scripts/eval-retrieval.ts（`pnpm eval:retrieval`：语料逐篇采集进临时库，用 KnowledgeRetrieval.search（与 kb_search 同一条链路，top_k=10）跑题目；题目自检——relevant 的 contains 必须出现在对应资料原文里；输出 Recall@10、MRR、按标签召回率，写 tests/retrieval/reports/<日期>.md；Recall<90% 时退出码 1）；tests/retrieval/corpus.json（语料键 → 文件名）、eval.jsonl（30 道有答案 + 10 道无答案）、reports/。**语料不入库**：用户提供的 9 个 PDF 用 pdftotext -enc UTF-8 转成 .txt（放在仓库外），经 EVAL_CORPUS_DIR 指定；tests/retrieval/corpus/ 已加入 .gitignore。报告只含题号、查询、名次。无新增依赖。
+- 结果（首次完整运行，未调参）：语料 9 篇 / 148,439 字符 / 249 个片段；**Recall@10 = 96.7%（29/30）、MRR = 0.933**，达到 ≥90%。标签：同义 7 题 100%；两字词 7 题 85.7%。唯一未命中是 q11「握手」——短查询在网络篇里命中大量讲三次握手的片段，我指定的那一段没进前 10 组。pnpm lint 通过。
+- 与 07 §7.1 的偏离（需你知情）：①**只有 9 篇**，不是 20–50 篇（三篇是百科式长文，各含 40–90 道题）；片段数 249，量级尚可，但篇数少。②题目是我根据资料内容起草的，不是你出的——请审阅，尤其是 contains 的取舍；contains 比对时两边去掉了空白（PDF 抽取的换行会带来空格）。③**版本 / 冲突类 10 题没做**：文本采集不产生新版本（版本只来自 URL 重抓），要做需要本机 HTTP 站点或改造夹具。④无答案题只记录检索返回了多少组结果，检索本身无法判断“没有答案”，留给回答评测（T-19）。⑤30 道有答案题样本小，1 题 = 3.3 个百分点，96.7% 的置信度有限。⑥三个大 PDF 是网页原格式，其中的图片没有文字层，只评了文字部分；这些 PDF 的版权不在本仓库，所以只提交了题目与报告、没有提交语料和原文。
+- 意外：①pdftotext 不带 -enc UTF-8 时在本机终端里丢 CJK 字符（看起来像“没有文字层”），加参数后正常。②之前 test 模式误用了 demo 的脚本化 faux，导致 t11 的两个 R1 进程级测试失败；已改为只有 demo 模式使用（见 T-18 条目的后续）。
+
+## 2026-11-09 T-18 Web 前端
+- 改动：**新依赖**（安装前已获用户确认，精确锁定，只在 apps/web，无安装脚本）：react 19.3.1、react-dom 19.3.1、vite 8.3.6、@vitejs/plugin-react 6.2.1、@types/react 19.3.0、@types/react-dom 19.3.0。apps/web：登录、对话页（SSE 快照按条目 id 合并、流式显示、插话、停止、失败提示加“继续”、加载更早、引用悬停与失效标红）、资料页（网页 / 文本 / 上传采集、筛选、详情、版本正文、停止 / 恢复使用、标签）、任务页（重试 / 取消，监听全局流并轮询兜底）；哈希路由，渲染全部走 React 文本节点（不使用 innerHTML）。服务端：GET /v1/chunks/:id（原先只在 06 里有）、静态托管（apps/server/src/static.ts：SPA 回退、路径逃逸拒绝、index.html 带 CSP）、`pnpm demo`（apps/server/src/demo.ts：脚本化 faux = kb_search → 带引用作答；临时数据目录；3 篇样例资料；口令 demodemo）。根 tsconfig 排除 apps/web，typecheck 另跑 apps/web 的配置；eslint 忽略 apps/web/dist。
+- 测试：tests/int/web-support.test.ts 2 个（chunks 路由：文本、owner / active / 非数字 / 不存在 / 未登录；静态托管：CSP、SPA 回退、缺失资源 404、三种路径逃逸写法）。pnpm lint 通过；pnpm test 39 文件 208 用例通过。pnpm test:recovery 7 文件 14 用例通过（修复 test 模式误用脚本化 faux 之后；之前一轮有 t11 两个用例失败，原因即此）。**手动走通（demo，内置浏览器）**：登录 → 新对话 → 提问 → 工具条目 + 带引用的回答 → 引用悬停显示片段原文 → 停止使用该资料后发下一条消息，旧回答的引用变红并写明“资料已停止使用” → 资料页 / 任务页列表。无真实模型调用。
+- DoD 未满足的部分：**30 秒录屏未做**（需要你确认是否要录、放哪里）；失败提示 + “继续”、断线重连横幅、插话 / 停止、上传文件、网页链接采集在浏览器里**未手动验证**（逻辑依赖 T-11 / T-12 / T-13 已测的接口）；前端本身没有自动化测试。
+- 意外 / 偏离：①demo 口令：06 写“demo”，但口令至少 8 个字符，改为 demodemo 并改了 06。②停止使用 / 恢复不会主动推送快照（06 §9.1 本就是“下一次快照”），所以已显示的引用要等下一次对话更新才变红。③pnpm 脚本在 Windows 下不能用 `APP_MODE=demo node …`，所以 demo 用 demo.ts 设置环境变量。④开发时 Vite 代理需要改写 Origin 才能通过来源校验（已在 vite.config.ts）。
+- 对文档的修改：06 §4（/v1/chunks 响应）、06 §10（demo）、AGENTS.md 命令。
+
+---
+
 ## 2026-11-06 开发前文档 v1
 
 - 改动：基于基础调研完成修订调研、PRD、架构、数据模型、Pi 接入规格、API、知识与记忆、测试计划、实施计划、ADR、来源索引、AGENTS.md。

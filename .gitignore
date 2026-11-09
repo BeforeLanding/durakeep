@@ -11,3 +11,4 @@ coverage/
 tests/**/reports/
 .DS_Store
 .tmp/
+tests/retrieval/corpus/
