@@ -146,6 +146,15 @@
 
 ---
 
+## 2026-11-09 T-19 导出与回答评测（付费评测已运行一次，**未达 FR-KB-05**）
+- 改动：GET /v1/export（apps/server/src/export.ts、zip.ts：自带“存储”方式 zip 写入器，用 node:zlib 的 crc32，**无新依赖**；整包在内存里构造，没有做成流式——单用户资料量可接受，已写进 06）；包内：manifest.json、documents/<doc>/<version>/{meta.json,text.md,raw.<ext>}；memories.json / reminders.json 等 P2 表出现后再加。scripts/eval-answer.ts：`--dry-run` 只估算并写 tests/retrieval/reports/answer-plan.json（含计划哈希）；`--confirm=<哈希>` 才会调用模型——哈希绑定题目、模型与语料，任一变化即失效（批准只对那一次计划有效）；APP_MODE=test|demo 与缺少 DEEPSEEK_API_KEY 时拒绝；累计费用超过 cap 即中止。scripts/eval-common.ts：两个评测脚本共用的语料采集与题目自检（eval-retrieval 已改用，复跑结果不变：Recall@10 96.7%）。回答原文与引用摘录只写入 tests/retrieval/review/（已 gitignore）。
+- 测试：tests/int/export.test.ts 2 个——导出结构（含不含认证 / 会话 / 幂等 / pi_ 的检查，未登录 401）；**S11**：消息正文、口令、错误口令、口令哈希、API key（环境变量里的哨兵值）、sid 都检索不到于日志和导出包。zip 用 Python zipfile 做过一次外部校验（CRC 通过）。pnpm lint 通过；pnpm test 40 文件 210 用例通过。dry-run 已运行：约 40 题、估算输入 31 万 / 输出 12 万 token ≈ $0.24（上界 ≈ $0.65，中止线 $0.97，deepseek-flash 0.3 / 1.2 美元每百万 token）。**付费回答评测（用户批准，计划 9494a1e97810，一次）**：第一次启动在发出任何模型调用之前因脚本 bug（对话对象取错字段）崩溃，未产生费用；修复后用同一计划运行了一次。实际用量：输入 286,731 / 输出 16,767 token，**≈ $0.076**（估算 $0.24，上界 $0.65——输出远低于估算，模型几乎不产生长推理）。完成 40/40 题。报告：tests/retrieval/reports/answer-2026-11-09.md。
+- 结果（FR-KB-05 的要求在括号里）：①**引用定位有效率 92.7%（51/55）**（要求 100%）——4 个无效引用全部是 unresolved：模型在正文写了 [n] 却没有输出 <citations> 块里对应的行（q10 两个、q14、q37），校验器拦下是正确的，问题在模型遵守格式。②**无答案题**：字面说出“现有资料不足”的 7/10（要求 ≥9/10）；另 3 题（q31、q35、q36）语义上也是“资料里没有”，但没用这句话（q36 还接着给了通用知识讲解）；q37、q40 说了“资料不足”却同时挂了引用（q40 引的是 B+ 树片段，确实存在但只是旁证；q37 的 [3] 是 unresolved）。③**该检索时没检索 3/30（10%）**：q08「中断」、q11「握手」、q13 没调用任何检索工具，其中两个是两字词查询，被当成闲聊（“好的，已中断”）。④有答案题的引用片段含标准答案 21/30（70%），其中 3 题错误地答“资料不足”（q10、q26 等）。⑤要求的**人工抽查 20 题（引用是否语义支持陈述）尚未做**：抽查表在 tests/retrieval/review/（不入库）。
+- 判断：这不是接线或校验的缺陷，而是**提示词遵从度**问题——三条最可能的改进都在 appCore 的静态提示：①强调每个 [n] 必须在 <citations> 里有对应行、否则不要写 [n]；②“资料不足”必须使用这个固定短语且此时不挂引用、不补充通用知识；③短词 / 单词查询也要先检索。改提示需要重新评测（再一次付费，约 $0.08），需要你批准；按 AGENTS.md 我不自行迭代。G1 出口因此**未通过**。
+- 注意：判定“资料不足”目前是字面匹配，偏严；如果你认为语义上拒答也应算数，指标要改（那是改验收口径，由你定）。
+
+- 对文档的修改：06 §7（/v1/export 的实际行为）。
+
 ## 2026-11-09 T-17 检索评测集与脚本
 - 改动：scripts/eval-retrieval.ts（`pnpm eval:retrieval`：语料逐篇采集进临时库，用 KnowledgeRetrieval.search（与 kb_search 同一条链路，top_k=10）跑题目；题目自检——relevant 的 contains 必须出现在对应资料原文里；输出 Recall@10、MRR、按标签召回率，写 tests/retrieval/reports/<日期>.md；Recall<90% 时退出码 1）；tests/retrieval/corpus.json（语料键 → 文件名）、eval.jsonl（30 道有答案 + 10 道无答案）、reports/。**语料不入库**：用户提供的 9 个 PDF 用 pdftotext -enc UTF-8 转成 .txt（放在仓库外），经 EVAL_CORPUS_DIR 指定；tests/retrieval/corpus/ 已加入 .gitignore。报告只含题号、查询、名次。无新增依赖。
 - 结果（首次完整运行，未调参）：语料 9 篇 / 148,439 字符 / 249 个片段；**Recall@10 = 96.7%（29/30）、MRR = 0.933**，达到 ≥90%。标签：同义 7 题 100%；两字词 7 题 85.7%。唯一未命中是 q11「握手」——短查询在网络篇里命中大量讲三次握手的片段，我指定的那一段没进前 10 组。pnpm lint 通过。

@@ -6,6 +6,7 @@ import type { Hono } from "hono";
 import type { AppEnv } from "./app.ts";
 import { parseLimit, readJson } from "./http.ts";
 import type { RateLimiter } from "./rateLimit.ts";
+import { buildExport } from "./export.ts";
 
 const presentDoc = (d: DocumentRow) => ({
   id: d.id,
@@ -185,6 +186,18 @@ export function mountDocumentRoutes(
       char_start: row.char_start,
       char_end: row.char_end,
       text: row.text,
+    });
+  });
+
+  // 导出（06 §7、04 §6）：zip，不含口令哈希、会话、幂等记录、事件与 pi_*
+  app.get("/v1/export", async (c) => {
+    const now = deps.clock.now();
+    const zip = await buildExport(knowledge, c.get("owner"), now);
+    const stamp = new Date(now).toISOString().replace(/[-:]/g, "").slice(0, 15);
+    return c.body(new Uint8Array(zip), 200, {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="export-${stamp}.zip"`,
+      "X-Content-Type-Options": "nosniff",
     });
   });
 

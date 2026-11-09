@@ -18,7 +18,8 @@
     "web:build": "pnpm --filter @durakeep/web build",
     "web:dev": "pnpm --filter @durakeep/web dev",
     "demo": "pnpm run web:build && node apps/server/src/demo.ts",
-    "eval:retrieval": "node scripts/eval-retrieval.ts"
+    "eval:retrieval": "node scripts/eval-retrieval.ts",
+    "eval:answer": "node scripts/eval-answer.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

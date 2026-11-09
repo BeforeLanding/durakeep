@@ -192,7 +192,7 @@ POST /v1/conversations/01J…/messages
 | GET | `/v1/health` | 不需要认证，只返回 `{ "ok": true }` 或 503 |
 | GET | `/v1/admin/health` | P3：运行时长、数据库大小、待执行和失败的作业数、未读通知数、最近一次备份、Pi 报告计数、投递是否暂停 |
 | GET | `/v1/usage?month=2026-11` | 按模型汇总的 token 数和估算费用，以及预算上限和使用比例 |
-| GET | `/v1/export` | 以流的形式返回 zip（格式见 04 §6） |
+| GET | `/v1/export` | 返回 zip（格式见 04 §6；当前实现为存储方式、整包在内存里构造，P1 只含资料，记忆与提醒随 P2 加入） |
 | POST | `/v1/admin/backup` | P3：立即备份，返回 `job_id` |
 | POST | `/v1/admin/delivery/resume` | P3：恢复备份后，人工确认恢复投递 |
 
