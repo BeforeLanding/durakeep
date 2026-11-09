@@ -32,7 +32,7 @@ if (!dry && ["test", "demo"].includes(process.env.APP_MODE ?? "")) {
 const reports = join(root, "tests/retrieval/reports");
 const planPath = join(reports, "answer-plan.json");
 const corpusSig = sha256(JSON.stringify(corpus));
-const planHash = sha256(`${questionsRaw}\n${MODEL}\n${corpusSig}`).slice(0, 12);
+const planHash = sha256(`${questionsRaw}\n${MODEL}\n${corpusSig}\n${buildPreamble()}`).slice(0, 12);
 
 const env = await setupCorpus();
 const invalid = validateQuestions(env.docText);
