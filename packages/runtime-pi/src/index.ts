@@ -7,3 +7,4 @@ export { appCoreExtension, buildPreamble } from "./extensions/appCore.ts";
 export { appGuardExtension, TOOL_ALLOWLIST } from "./extensions/appGuard.ts";
 export { appKnowledgeExtension, type KnowledgeToolDeps } from "./extensions/appKnowledge.ts";
 export { appMemoryExtension, type MemoryToolDeps } from "./extensions/appMemory.ts";
+export { appProfileExtension, PROFILE_LIMIT } from "./extensions/appProfile.ts";

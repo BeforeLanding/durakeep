@@ -146,6 +146,11 @@
 
 ---
 
+## 2026-11-09 T-21 profile section
+- 改动：runtime-pi 的 AppProfile 扩展（section "profile"：按会话映射取 owner，global + confirmed 的记忆按 key 排序、最多 20 条，格式如 05 §4.2；按 memory_set_revision 在进程内缓存——版本不变返回同一字符串；没有记忆返回 undefined 以省略 section）；main.ts 安装。
+- 测试：tests/int/profile-section.test.ts 3 个：**K5 在真实记忆上复测**（偏好不变 → 连续 10 次请求后 pi.system 仍为 1、每次请求都渲染；新增一条 → 恰好追加 1 次，再请求不再追加）；只含 global + confirmed（project、候选、停用、被取代、别人的都不出现；按 key 排序）；无记忆省略 section、25 条只显示 20 条。pnpm lint 通过。
+- 偏离：05 §4.2 写“超出 20 条的部分写入 app_events”——app_events 表目前还不存在（后面的任务才建），所以只截断、没有事件；表建好后补。
+
 ## 2026-11-09 T-20 记忆存储与工具
 - 改动：**新包 packages/memory**（MemoryService：写入、同 key 新值 → 旧记录 superseded 并由新记录 supersedes、revision、检索、候选确认 / 拒绝、停用 / 重新启用、删除 + suppression、memory_set_revision）；db 迁移 7（app_settings、app_memories、app_memory_revisions、app_memory_suppressions，与 04 一致）；runtime-pi 的 AppMemory 扩展（memory_search 读；memory_remember 写，走 once()、replay: safe、owner 由会话映射取得），工具白名单加入这两个工具，main.ts 以 appCoreExtension({ memory: true }) 启用记忆规则；接口 /v1/memories（列表、手动添加（请求级幂等）、PATCH（expected_revision → 409）、confirm、reject、revoke、enable、DELETE、revisions）。无第三方依赖。
 - 测试：tests/int/memory.test.ts 10 个：**FR-MEM-03**（冲突后检索 / 列表 / section 候选里只有新值）、相同值不变、集合版本在每次 confirmed 变化时加一而候选 / 拒绝不变、**FR-MEM-02**（revision 历史、409、停用后立即不被检索 / 不进 section、重新启用）、候选确认取代旧值、拒绝与删除后不再被提取（显式写入可覆盖 suppression）、参数校验与作用域、接口全流程（含 401 与别人的记忆 404）、**FR-MEM-01**（经 Pi + faux：memory_remember 保存并回执，另一个新会话里 memory_search 取到，同 key 新值取代并在回执说明）、参数非法 / owner_id 参数被拒、系统提示静态。pnpm lint 通过；pnpm test 见下。无真实模型调用。
