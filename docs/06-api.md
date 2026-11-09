@@ -157,6 +157,7 @@ POST /v1/conversations/01J…/messages
 | POST | `/v1/memories/:id/confirm` | 候选 → 已确认 |
 | POST | `/v1/memories/:id/reject` | 候选 → 已拒绝，同时写入 suppression |
 | POST | `/v1/memories/:id/revoke` | 停用 |
+| POST | `/v1/memories/:id/enable` | 重新启用（revoked → confirmed，revision+1；同 key 已有 confirmed 时它被取代） |
 | DELETE | `/v1/memories/:id` | 彻底删除，同时写入 suppression |
 | GET | `/v1/memories/:id/revisions` | 历史版本 |
 

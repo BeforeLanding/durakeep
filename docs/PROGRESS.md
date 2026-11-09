@@ -146,6 +146,13 @@
 
 ---
 
+## 2026-11-09 T-20 记忆存储与工具
+- 改动：**新包 packages/memory**（MemoryService：写入、同 key 新值 → 旧记录 superseded 并由新记录 supersedes、revision、检索、候选确认 / 拒绝、停用 / 重新启用、删除 + suppression、memory_set_revision）；db 迁移 7（app_settings、app_memories、app_memory_revisions、app_memory_suppressions，与 04 一致）；runtime-pi 的 AppMemory 扩展（memory_search 读；memory_remember 写，走 once()、replay: safe、owner 由会话映射取得），工具白名单加入这两个工具，main.ts 以 appCoreExtension({ memory: true }) 启用记忆规则；接口 /v1/memories（列表、手动添加（请求级幂等）、PATCH（expected_revision → 409）、confirm、reject、revoke、enable、DELETE、revisions）。无第三方依赖。
+- 测试：tests/int/memory.test.ts 10 个：**FR-MEM-03**（冲突后检索 / 列表 / section 候选里只有新值）、相同值不变、集合版本在每次 confirmed 变化时加一而候选 / 拒绝不变、**FR-MEM-02**（revision 历史、409、停用后立即不被检索 / 不进 section、重新启用）、候选确认取代旧值、拒绝与删除后不再被提取（显式写入可覆盖 suppression）、参数校验与作用域、接口全流程（含 401 与别人的记忆 404）、**FR-MEM-01**（经 Pi + faux：memory_remember 保存并回执，另一个新会话里 memory_search 取到，同 key 新值取代并在回执说明）、参数非法 / owner_id 参数被拒、系统提示静态。pnpm lint 通过；pnpm test 见下。无真实模型调用。
+- 意外 / 偏离：①单字查询（“辣”）首版查不到“微辣可以”——检索只建了二字组合；已改为索引侧同时收录单字、查询侧仅在整段只有一个字时使用单字，并有回归断言。②06 §5 没有“重新启用”接口，新增 POST /v1/memories/:id/enable（04 §4.2 的 revoked → confirmed）。③“假设性的话不被保存”（FR-MEM-01 验收的后半句）是模型行为，靠 05 §4.1 第 6 条提示约束，机制测试覆盖不了；下一次回答评测时可以加几道题。
+- 已知缺口：memory_remember 没有写工具 R2 ×20 的进程级崩溃测试（kb_capture_* 有）；结构与 once() 相同，但按 AGENTS.md 精神应补，等你决定。
+- 对文档的修改：06 §5（enable、revisions 响应）。
+
 ## 2026-11-09 T-19 导出与回答评测（付费评测两次；第二次达到 FR-KB-05 的自动指标）
 - 改动：GET /v1/export（apps/server/src/export.ts、zip.ts：自带“存储”方式 zip 写入器，用 node:zlib 的 crc32，**无新依赖**；整包在内存里构造，没有做成流式——单用户资料量可接受，已写进 06）；包内：manifest.json、documents/<doc>/<version>/{meta.json,text.md,raw.<ext>}；memories.json / reminders.json 等 P2 表出现后再加。scripts/eval-answer.ts：`--dry-run` 只估算并写 tests/retrieval/reports/answer-plan.json（含计划哈希）；`--confirm=<哈希>` 才会调用模型——哈希绑定题目、模型与语料，任一变化即失效（批准只对那一次计划有效）；APP_MODE=test|demo 与缺少 DEEPSEEK_API_KEY 时拒绝；累计费用超过 cap 即中止。scripts/eval-common.ts：两个评测脚本共用的语料采集与题目自检（eval-retrieval 已改用，复跑结果不变：Recall@10 96.7%）。回答原文与引用摘录只写入 tests/retrieval/review/（已 gitignore）。
 - 测试：tests/int/export.test.ts 2 个——导出结构（含不含认证 / 会话 / 幂等 / pi_ 的检查，未登录 401）；**S11**：消息正文、口令、错误口令、口令哈希、API key（环境变量里的哨兵值）、sid 都检索不到于日志和导出包。zip 用 Python zipfile 做过一次外部校验（CRC 通过）。pnpm lint 通过；pnpm test 40 文件 210 用例通过。dry-run 已运行：约 40 题、估算输入 31 万 / 输出 12 万 token ≈ $0.24（上界 ≈ $0.65，中止线 $0.97，deepseek-flash 0.3 / 1.2 美元每百万 token）。**付费回答评测（用户批准，计划 9494a1e97810，一次）**：第一次启动在发出任何模型调用之前因脚本 bug（对话对象取错字段）崩溃，未产生费用；修复后用同一计划运行了一次。实际用量：输入 286,731 / 输出 16,767 token，**≈ $0.076**（估算 $0.24，上界 $0.65——输出远低于估算，模型几乎不产生长推理）。完成 40/40 题。报告：tests/retrieval/reports/answer-2026-11-09.md。

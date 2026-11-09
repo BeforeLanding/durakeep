@@ -47,6 +47,9 @@ importers:
       '@durakeep/knowledge':
         specifier: workspace:*
         version: link:../../packages/knowledge
+      '@durakeep/memory':
+        specifier: workspace:*
+        version: link:../../packages/memory
       '@durakeep/runtime-pi':
         specifier: workspace:*
         version: link:../../packages/runtime-pi
@@ -130,6 +133,15 @@ importers:
         specifier: 5.0.6
         version: 5.0.6
 
+  packages/memory:
+    dependencies:
+      '@durakeep/core':
+        specifier: workspace:*
+        version: link:../core
+      '@durakeep/db':
+        specifier: workspace:*
+        version: link:../db
+
   packages/runtime-pi:
     dependencies:
       '@durakeep/conversations':
@@ -144,6 +156,9 @@ importers:
       '@durakeep/knowledge':
         specifier: workspace:*
         version: link:../knowledge
+      '@durakeep/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@earendil-works/chord':
         specifier: 1.5.0
         version: 1.5.0

@@ -168,6 +168,49 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE VIRTUAL TABLE app_chunks_tri USING fts5(text, tokenize = 'trigram');
     `,
   },
+  {
+    id: 7,
+    sql: `
+      CREATE TABLE app_settings (
+        key        TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE app_memories (
+        id            TEXT PRIMARY KEY,
+        owner_id      TEXT NOT NULL REFERENCES app_owners(id),
+        kind          TEXT NOT NULL CHECK (kind IN ('preference','profile_fact','project_context')),
+        key           TEXT NOT NULL,
+        value         TEXT NOT NULL,
+        scope         TEXT NOT NULL,
+        status        TEXT NOT NULL CHECK (status IN ('candidate','confirmed','superseded','revoked','rejected')),
+        revision      INTEGER NOT NULL DEFAULT 1,
+        source_json   TEXT NOT NULL,
+        supersedes_id TEXT,
+        confirmed_at  INTEGER,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX app_memories_active_key ON app_memories(owner_id, scope, key) WHERE status = 'confirmed';
+      CREATE INDEX app_memories_owner ON app_memories(owner_id, status, updated_at DESC);
+      CREATE TABLE app_memory_revisions (
+        memory_id  TEXT NOT NULL REFERENCES app_memories(id),
+        revision   INTEGER NOT NULL,
+        value      TEXT NOT NULL,
+        status     TEXT NOT NULL,
+        changed_by TEXT NOT NULL CHECK (changed_by IN ('user','tool','extractor')),
+        changed_at INTEGER NOT NULL,
+        PRIMARY KEY (memory_id, revision)
+      );
+      CREATE TABLE app_memory_suppressions (
+        owner_id    TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        reason      TEXT NOT NULL CHECK (reason IN ('rejected','deleted')),
+        created_at  INTEGER NOT NULL,
+        PRIMARY KEY (owner_id, fingerprint)
+      );
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

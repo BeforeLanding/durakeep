@@ -4,8 +4,9 @@ import { ConversationDirectory, ConversationService, IngressService } from "@dur
 import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { JobWorker } from "@durakeep/jobs";
+import { MemoryService } from "@durakeep/memory";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
-import { appCoreExtension, appGuardExtension, appKnowledgeExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
+import { appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { AuthService } from "./auth.ts";
@@ -76,12 +77,13 @@ worker.start();
 // 运行时：扩展 = AppCore（静态系统提示）+ AppKnowledge（kb_* 工具）+ AppGuard（会话映射与白名单）
 const directory = new ConversationDirectory(db); // 只依赖 db：工具与 Guard 按 Pi 会话 ID 找 owner，不必等 ConversationService（它依赖 runtime）
 const retrieval = new KnowledgeRetrieval(db);
+const memory = new MemoryService(db, systemClock);
 const useFaux = mode === "test" || mode === "demo";
 const pi = await startPi({
   mode,
   db: raw,
   ...(useFaux ? { faux: mode === "demo" ? demoScriptedFaux() : demoFaux() } : {}),
-  extensions: [appCoreExtension(), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appGuardExtension({ conversations: directory })],
+  extensions: [appCoreExtension({ memory: true }), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appMemoryExtension({ db, conversations: directory, memory }), appGuardExtension({ conversations: directory })],
   onReport: (r) => log({ level: r.kind === "storage_failed" ? "error" : "warn", event: "pi.report", kind: r.kind }),
   onFatal: (error) => {
     // 03 §6：Harness 失效 → 停止接纳 → 记录 → 退出，由进程管理器拉起；重启后恢复
@@ -108,6 +110,7 @@ const { app } = createApp({
   isHealthy: () => healthy,
   chat: { conversations, ingress, runtime },
   knowledge,
+  memory,
   citations: new CitationValidator(db),
   wakeJobs: () => worker.wake(),
   hub,
