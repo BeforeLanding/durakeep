@@ -211,6 +211,49 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       );
     `,
   },
+  {
+    id: 8,
+    sql: `
+      CREATE TABLE app_schedules (
+        id              TEXT PRIMARY KEY,
+        owner_id        TEXT NOT NULL REFERENCES app_owners(id),
+        conversation_id TEXT REFERENCES app_conversations(id),
+        text            TEXT NOT NULL,
+        document_id     TEXT,
+        local_datetime  TEXT NOT NULL,
+        timezone        TEXT NOT NULL,
+        next_fire_at    INTEGER,
+        revision        INTEGER NOT NULL DEFAULT 1,
+        status          TEXT NOT NULL CHECK (status IN ('active','fired','cancelled')),
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      CREATE INDEX app_schedules_due ON app_schedules(status, next_fire_at) WHERE status = 'active';
+      CREATE INDEX app_schedules_owner ON app_schedules(owner_id, status, updated_at DESC);
+      CREATE TABLE app_occurrences (
+        id          TEXT PRIMARY KEY,
+        schedule_id TEXT NOT NULL REFERENCES app_schedules(id),
+        revision    INTEGER NOT NULL,
+        fire_at     INTEGER NOT NULL,
+        fired_at    INTEGER NOT NULL,
+        late_ms     INTEGER NOT NULL,
+        UNIQUE (schedule_id, revision, fire_at)
+      );
+      CREATE TABLE app_notifications (
+        id         TEXT PRIMARY KEY,
+        owner_id   TEXT NOT NULL REFERENCES app_owners(id),
+        dedupe_key TEXT NOT NULL,
+        kind       TEXT NOT NULL CHECK (kind IN ('reminder','job_failed','system')),
+        title      TEXT NOT NULL,
+        body       TEXT NOT NULL,
+        link       TEXT,
+        created_at INTEGER NOT NULL,
+        read_at    INTEGER,
+        UNIQUE (owner_id, dedupe_key)
+      );
+      CREATE INDEX app_notifications_unread ON app_notifications(owner_id, read_at, created_at DESC);
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

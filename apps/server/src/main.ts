@@ -5,8 +5,9 @@ import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { JobWorker } from "@durakeep/jobs";
 import { MemoryService } from "@durakeep/memory";
+import { ReminderService, Scheduler } from "@durakeep/reminders";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
-import { appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
+import { appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { AuthService } from "./auth.ts";
@@ -78,12 +79,19 @@ worker.start();
 const directory = new ConversationDirectory(db); // 只依赖 db：工具与 Guard 按 Pi 会话 ID 找 owner，不必等 ConversationService（它依赖 runtime）
 const retrieval = new KnowledgeRetrieval(db);
 const memory = new MemoryService(db, systemClock);
+const reminders = new ReminderService(db, systemClock);
+const scheduler = new Scheduler(db, systemClock, (f) => {
+  hub.publish({ ownerId: f.ownerId, event: "notification", data: { id: f.notification.id, kind: "reminder", title: f.notification.title, body: f.notification.body, link: f.notification.link } });
+  void reminders.unreadCount(f.ownerId).then((count) => hub.publish({ ownerId: f.ownerId, event: "unread", data: { count } }));
+  log({ level: "info", event: "reminder.fired", schedule_id: f.scheduleId, late_ms: f.lateMs, catchup: f.catchup });
+});
+reminders.onChange = () => scheduler.wake();
 const useFaux = mode === "test" || mode === "demo";
 const pi = await startPi({
   mode,
   db: raw,
   ...(useFaux ? { faux: mode === "demo" ? demoScriptedFaux() : demoFaux() } : {}),
-  extensions: [appCoreExtension({ memory: true }), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appMemoryExtension({ db, conversations: directory, memory }), appProfileExtension({ conversations: directory, memory }), appGuardExtension({ conversations: directory })],
+  extensions: [appCoreExtension({ memory: true, reminders: true }), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appMemoryExtension({ db, conversations: directory, memory }), appProfileExtension({ conversations: directory, memory }), appRemindersExtension({ db, conversations: directory, reminders }), appGuardExtension({ conversations: directory })],
   onReport: (r) => log({ level: r.kind === "storage_failed" ? "error" : "warn", event: "pi.report", kind: r.kind }),
   onFatal: (error) => {
     // 03 §6：Harness 失效 → 停止接纳 → 记录 → 退出，由进程管理器拉起；重启后恢复
@@ -111,6 +119,7 @@ const { app } = createApp({
   chat: { conversations, ingress, runtime },
   knowledge,
   memory,
+  reminders,
   citations: new CitationValidator(db),
   wakeJobs: () => worker.wake(),
   hub,
@@ -124,6 +133,7 @@ if (mode === "demo") {
   }
   log({ level: "info", event: "demo.ready", hint: "口令 demodemo" });
 }
+scheduler.start(); // 启动时先补发已到期的提醒（FR-REM-04），再按下一次到期时间设置定时器
 const server = await listen(app.fetch, { host, port });
 log({ level: "info", event: "listening", port: server.port, mode });
 
@@ -133,6 +143,7 @@ async function shutdown(signal: string) {
   closing = true;
   log({ level: "info", event: "shutdown", signal });
   await server.close();
+  await scheduler.stop();
   await worker.stop(); // 等待执行中的作业结束
   await runtime.close(); // 等待任务代码返回，并关闭共享连接
   lock.release();

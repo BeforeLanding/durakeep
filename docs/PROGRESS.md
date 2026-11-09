@@ -146,6 +146,16 @@
 
 ---
 
+## 2026-11-09 T-26 前端：记忆、提醒、通知
+- 改动：apps/web 新增记忆页（已确认 / 候选 / 已停用 / 已被取代四个标签；手动添加；修改（带 expected_revision）；停用 / 重新启用；确认 / 拒绝候选；历史 revision；删除前确认并提示“不会再被自动提取”）、提醒页（创建：内容 + datetime-local + 时区，提示回显完整本地日期与星期；按状态列表；修改 / 取消；显示触发时间与“迟到 N 分钟”）、通知页（列表、已读、全部已读），导航栏的未读数徽标（全局流的 unread / notification 事件实时更新）。App 拆出 Shell：登录之后才打开全局流。无新依赖。
+- 验证：pnpm lint 通过、前端构建通过；在 demo 里（内置浏览器）手动走通：创建一条约 75 秒后的提醒 → 提醒页显示“2026-11-09 15:49 星期一（Asia/Shanghai）”→ 到点后**导航栏“通知”出现徽标 1（实时，没有刷新页面）**、提醒页的“进行中”列表清空 → 通知页出现这条 → 记忆页显示手动添加的偏好（来源“手动”、r1）。**没有手动点过**：记忆的修改 / 停用 / 删除 / 历史、提醒的修改 / 取消、候选标签（候选目前没有生产者，T-24 才有）；前端没有自动化测试。
+
+## 2026-11-09 T-22 提醒与调度器
+- 改动：**新包 packages/reminders**：时间换算（**用 Intl 实现，没有引入 luxon**——计划里写的是 luxon，但“严格校验 IANA 时区 + 夏令时跳过 / 重复一律拒绝”用 Intl 约 40 行就能做到，省一个依赖；拒绝的做法是用前后一天的偏移反推候选 UTC，再反算回本地时间，0 个有效解 = 被跳过，2 个 = 重复）；ReminderService（创建 / 修改 / 取消 / 列表 / 通知；修改让 revision 加一并重算 next_fire_at；time_in_past → 422）；Scheduler（定时器指向 min(next_fire_at)，最长 60 s 兜底，start() 先补发已到期的；每个提醒在一个事务里触发：重读当前 revision / 状态 → 插入 occurrence（唯一）→ 置 fired → 写通知（dedupe_key = occ:<id>）；比计划晚 ≥ 120 s 的算“补发”，通知里写“（迟到 N 分钟）”，统计与正常触发分开）。db 迁移 8（app_schedules、app_occurrences、app_notifications，同 04）。runtime-pi 的 AppReminders 扩展（reminder_create / reminder_update / reminder_cancel 走 once()、replay: safe；reminder_list 只读），白名单加入；main.ts 启用提醒规则、安装 Scheduler 并把触发接到全局流（notification + unread 事件）、关闭时先停 Scheduler。接口 /v1/reminders（列表、创建（请求级幂等）、PATCH（expected_revision）、cancel）、/v1/notifications（列表含未读数、read、read-all）。
+- 测试：tests/int/reminders.test.ts 11 个：时间换算（上海、纽约夏令时、星期回显、不存在的日期、非 IANA 时区）；**夏令时跳过 / 重复被拒绝**（纽约春秋、柏林春季）而前后一小时正常；**FR-REM-01**（回显完整日期 / 星期 / 时区 / UTC 且与实际触发一致；过去的时间拒绝；关联资料必须存在）；**R4 / FR-REM-02**（修改后旧时间到期不触发、新时间触发一次；取消不触发；已触发的不能再改；修改与 tick 交错时按旧时间不会触发）；**FR-REM-03**（通知、未读数、已读 / 全部已读、重复 tick 只通知一次、occurrence 唯一约束）；**FR-REM-04**（停机 3 小时后重启，补发并标“迟到 120 分钟”，补发与正常触发分开统计）；**1,000 个随机时间的提醒按 Scheduler 自己的唤醒间隔推进假时钟，p95 延迟 ≤ 60 s**；Scheduler 自己的定时器；接口全流程（幂等、422、409、400、401、别人的 404）；工具经 Pi + faux（创建回显、过去 / 夏令时错误结果且不写入、update / list / cancel、重复 cancel 不出错、owner_id 参数被拒）。pnpm lint 通过；pnpm test 43 文件 234 用例通过。无真实模型调用。
+- 意外：①工具参数的日期正则在 TS 里写成 "^d…" 时被转义吃掉了反斜杠（变成 "^d{4}…"），Pi 的参数校验把所有合法时间都拒了——测试第一次就抓到；改用 String.raw。②我的接口测试先快进 5 分钟，被自己的“补发”阈值判为迟到（通知正文多了“迟到 4 分钟”）——是测试数据的问题，阈值 120 s 是有意的。
+- 已知缺口：提醒 / 记忆的写工具都还没有 R2 ×20 的进程级崩溃测试；到期通知目前只有站内（全局流 + 列表），页面顶部的未读数在 T-26。
+
 ## 2026-11-09 T-21 profile section
 - 改动：runtime-pi 的 AppProfile 扩展（section "profile"：按会话映射取 owner，global + confirmed 的记忆按 key 排序、最多 20 条，格式如 05 §4.2；按 memory_set_revision 在进程内缓存——版本不变返回同一字符串；没有记忆返回 undefined 以省略 section）；main.ts 安装。
 - 测试：tests/int/profile-section.test.ts 3 个：**K5 在真实记忆上复测**（偏好不变 → 连续 10 次请求后 pi.system 仍为 1、每次请求都渲染；新增一条 → 恰好追加 1 次，再请求不再追加）；只含 global + confirmed（project、候选、停用、被取代、别人的都不出现；按 key 排序）；无记忆省略 section、25 条只显示 20 条。pnpm lint 通过。

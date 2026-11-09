@@ -50,6 +50,9 @@ importers:
       '@durakeep/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@durakeep/reminders':
+        specifier: workspace:*
+        version: link:../../packages/reminders
       '@durakeep/runtime-pi':
         specifier: workspace:*
         version: link:../../packages/runtime-pi
@@ -142,6 +145,15 @@ importers:
         specifier: workspace:*
         version: link:../db
 
+  packages/reminders:
+    dependencies:
+      '@durakeep/core':
+        specifier: workspace:*
+        version: link:../core
+      '@durakeep/db':
+        specifier: workspace:*
+        version: link:../db
+
   packages/runtime-pi:
     dependencies:
       '@durakeep/conversations':
@@ -159,6 +171,9 @@ importers:
       '@durakeep/memory':
         specifier: workspace:*
         version: link:../memory
+      '@durakeep/reminders':
+        specifier: workspace:*
+        version: link:../reminders
       '@earendil-works/chord':
         specifier: 1.5.0
         version: 1.5.0

@@ -87,3 +87,28 @@ export type Job = {
   document_id: string | null;
   updated_at: number;
 };
+
+export type Memory = {
+  id: string;
+  kind: string;
+  key: string;
+  value: string;
+  scope: string;
+  status: string;
+  revision: number;
+  source: { kind: string };
+  updated_at: number;
+};
+export type MemoryRevision = { revision: number; value: string; status: string; changed_by: string; changed_at: number };
+export type Reminder = {
+  id: string;
+  text: string;
+  local: string;
+  timezone: string;
+  local_datetime: string;
+  next_fire_at: number | null;
+  revision: number;
+  status: string;
+  last_occurrence: { fired_at: number; late_ms: number } | null;
+};
+export type Notification = { id: string; kind: string; title: string; body: string; link: string | null; created_at: number; read: boolean };

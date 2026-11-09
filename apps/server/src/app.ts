@@ -4,6 +4,7 @@ import type { AppEntry, ConversationSnapshot, RuntimePort } from "@durakeep/core
 import type { SqlDatabase } from "@durakeep/db";
 import type { CitationValidator, KnowledgeService } from "@durakeep/knowledge";
 import type { MemoryService } from "@durakeep/memory";
+import type { ReminderService } from "@durakeep/reminders";
 import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
@@ -13,6 +14,7 @@ import { EventHub } from "./hub.ts";
 import { readJson } from "./http.ts";
 import { presentEntry, presentSnapshot, type CitationMap } from "./present.ts";
 import { mountMemoryRoutes } from "./routes-memory.ts";
+import { mountReminderRoutes } from "./routes-reminders.ts";
 import { mountDocumentRoutes } from "./routes-documents.ts";
 import { RateLimiter } from "./rateLimit.ts";
 import { staticFiles } from "./static.ts";
@@ -61,6 +63,8 @@ export type AppDeps = {
   citations?: CitationValidator;
   /** 长期记忆（T-20）；未提供时不挂载 /v1/memories。 */
   memory?: MemoryService;
+  /** 提醒与通知（T-22）；未提供时不挂载 /v1/reminders、/v1/notifications。 */
+  reminders?: ReminderService;
   /** 前端构建产物目录；提供时托管静态文件（非 /v1 的 GET）。 */
   staticDir?: string;
   /** 入队 / 重试后唤醒 JobWorker。 */
@@ -184,6 +188,7 @@ export function createApp(deps: AppDeps) {
   if (deps.chat) mountConversationRoutes(app, deps, deps.chat, limiter);
   if (deps.knowledge) mountDocumentRoutes(app, { db: deps.db, clock: deps.clock, limits: deps.limits, wake: deps.wakeJobs }, deps.knowledge, limiter, LIMITS.capture);
   if (deps.memory) mountMemoryRoutes(app, { db: deps.db }, deps.memory);
+  if (deps.reminders) mountReminderRoutes(app, { db: deps.db, hub }, deps.reminders);
   mountGlobalStream(app, deps, hub);
   if (deps.staticDir) app.use("*", staticFiles(deps.staticDir));
 
