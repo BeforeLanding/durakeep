@@ -146,6 +146,12 @@
 
 ---
 
+## 2026-11-18 T-23 后台会话与摘要
+- 改动：packages/jobs 新增 `BackgroundModel`（ADR-10）：作业的专用后台会话（ID 记在 app_jobs.pi_conversation_id，创建与复用；条件更新防并发覆盖）、`requestId = job:<id>:<stage>`、答案进 checkpoint；故障点 `background.after_create` / `background.after_answer`。runtime-pi：后台会话创建时 `extensions: []`、`tools: []`、`maxTurns: 1`。knowledge：资料 ready 时在同一事务里入队 `summarize` 作业（dedupe `summarize:<version_id>`），处理器读正文（≤18000 字符，约 12k tokens）→ 后台会话 → 只取“- ”开头的要点行（≤5 条、每条≤80 字）→ `UPDATE … WHERE summary_edited = 0` 写回；`PATCH /v1/documents/:id {summary}` 编辑当前版本摘要并置 `summary_edited=1`。main.ts：JobWorker 改为在 `runtime.resume()` 之后才 `recover()` / `start()`（后台作业要用运行时）。demo / test 的 faux 对摘要请求返回固定要点。
+- 测试：tests/int/summary.test.ts 5 个（cleanSummary；后台会话无工具、无 AppCore 提示、正文包在 `<document>` 里、会话 ID 已记录；作业运行期间用户编辑 → 不被覆盖；编辑校验；输出无要点 → 重试并复用同一会话）。**R14**：tests/recovery/r14.test.ts——子进程在 `background.after_answer` 被杀，恢复后摘要写回、**faux callCount = 0**、仍是同一个后台会话，×20 通过；另测 `background.after_create`（孤儿会话，恢复后新建并完成）。pnpm lint 通过；pnpm test 44 文件 239 用例通过。无真实模型调用。
+- 意外：①首版把模型的“坏答案”存进 checkpoint，重试直接读回同一个坏答案、永远不会重新询问——集成测试抓到；改为阶段名带 `redo` 序号（见 05 §8）。②demo / test 的 faux 原本对任何输入返回固定文本，会被当成摘要；已让它识别摘要请求。
+- 已知缺口：前端没有展示 / 编辑摘要的界面（接口已有）；摘要质量未用真实模型评估（需用户批准的付费调用，约几厘钱）；孤儿后台会话的清理任务留到 P3（ADR-10）；摘要只在新资料 ready 时生成，已有资料不补。
+
 ## 2026-11-09 T-26 前端：记忆、提醒、通知
 - 改动：apps/web 新增记忆页（已确认 / 候选 / 已停用 / 已被取代四个标签；手动添加；修改（带 expected_revision）；停用 / 重新启用；确认 / 拒绝候选；历史 revision；删除前确认并提示“不会再被自动提取”）、提醒页（创建：内容 + datetime-local + 时区，提示回显完整本地日期与星期；按状态列表；修改 / 取消；显示触发时间与“迟到 N 分钟”）、通知页（列表、已读、全部已读），导航栏的未读数徽标（全局流的 unread / notification 事件实时更新）。App 拆出 Shell：登录之后才打开全局流。无新依赖。
 - 验证：pnpm lint 通过、前端构建通过；在 demo 里（内置浏览器）手动走通：创建一条约 75 秒后的提醒 → 提醒页显示“2026-11-09 15:49 星期一（Asia/Shanghai）”→ 到点后**导航栏“通知”出现徽标 1（实时，没有刷新页面）**、提醒页的“进行中”列表清空 → 通知页出现这条 → 记忆页显示手动添加的偏好（来源“手动”、r1）。**没有手动点过**：记忆的修改 / 停用 / 删除 / 历史、提醒的修改 / 取消、候选标签（候选目前没有生产者，T-24 才有）；前端没有自动化测试。

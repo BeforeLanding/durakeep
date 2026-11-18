@@ -3,7 +3,7 @@
 import { ConversationDirectory, ConversationService, IngressService } from "@durakeep/conversations";
 import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
-import { JobWorker } from "@durakeep/jobs";
+import { BackgroundModel, JobWorker } from "@durakeep/jobs";
 import { MemoryService } from "@durakeep/memory";
 import { ReminderService, Scheduler } from "@durakeep/reminders";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
@@ -60,6 +60,7 @@ const knowledge = new KnowledgeService({
   indexer: createChunkIndexer(db),
   log,
   wake: () => worker.wake(), // worker 在下面创建；wake 只会在它创建之后被调用
+  background: new BackgroundModel(db, systemClock, () => runtime), // 运行时在后面创建；作业在 runtime.resume() 之后才开始领取
 });
 const worker = new JobWorker(db, systemClock, knowledge.handlers(), {
   log,
@@ -72,8 +73,6 @@ const worker = new JobWorker(db, systemClock, knowledge.handlers(), {
     });
   },
 });
-await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
-worker.start();
 
 // 运行时：扩展 = AppCore（静态系统提示）+ AppKnowledge（kb_* 工具）+ AppGuard（会话映射与白名单）
 const directory = new ConversationDirectory(db); // 只依赖 db：工具与 Guard 按 Pi 会话 ID 找 owner，不必等 ConversationService（它依赖 runtime）
@@ -109,6 +108,8 @@ const conversations = new ConversationService(db, runtime, systemClock);
 const ingress = new IngressService(db, runtime, systemClock, conversations, log);
 await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
+await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
+worker.start(); // 后台作业要用运行时，所以在它就绪之后才开始领取
 
 const webDist = resolve(import.meta.dirname, "../../web/dist");
 const { app } = createApp({

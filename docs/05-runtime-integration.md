@@ -239,8 +239,8 @@ export type ConversationSnapshot = {
 ## 8. 后台会话（ADR-10，P2）
 
 - 后台作业第一次需要调用模型时，在业务事务中检查 `app_jobs.pi_conversation_id`；为空时调用 `createConversation({ kind: "background", instructions })` 并写回这个字段。
-- 后台会话执行 `configure({ extensions: [AppBackground], tools: [], maxTurns: 1 })`，不带任何工具。
-- 提交 `{ type: "input", content, requestId: "job:<job_id>:<stage>" }`，用 `wait()` 取得答案，然后在业务事务中写回结果并推进 checkpoint。
+- 后台会话创建时即指定 `extensions: []`、`tools: []`、`maxTurns: 1`（实现为 `createConversation({ kind: "background" })` 的 agent 配置，没有 AppBackground 扩展）：没有 AppCore 的系统提示，也不可能调用工具。
+- 提交 `{ type: "input", content, requestId: "job:<job_id>:<stage>" }`，用 `wait()` 取得答案，答案存入 checkpoint（`answer:<stage>`），然后写回结果。实现见 `packages/jobs/src/background.ts` 的 `BackgroundModel.ask`。答案校验不通过时，处理器把 checkpoint 里的 `redo` 加一，阶段名随之变化（`summary:<redo>`），重试会换新的 requestId 重新询问；崩溃重跑则沿用旧 requestId，不会再付费。
 - 摘要的提示：“为下面的资料写 3–5 条中文要点，每条不超过 40 字，只依据原文……”；输入正文截断到 12k tokens。
 - 记忆候选提取（FR-MEM-04）的输出是 JSON 数组 `[{kind,key,value,scope,evidence_entry_id}]`，由业务层校验 schema、对照 suppression 过滤后写入 `candidate`。
 

@@ -158,7 +158,7 @@ export function mountDocumentRoutes(
   });
 
   app.patch("/v1/documents/:id", async (c) => {
-    const body = (await readJson(c)) as { title?: unknown; tags?: unknown } | null;
+    const body = (await readJson(c)) as { title?: unknown; tags?: unknown; summary?: unknown } | null;
     return c.json(presentDoc(await knowledge.update(c.get("owner").id, c.req.param("id"), body ?? {})));
   });
   app.post("/v1/documents/:id/revoke", async (c) => c.json(presentDoc(await knowledge.revoke(c.get("owner").id, c.req.param("id")))));

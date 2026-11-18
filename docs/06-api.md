@@ -112,7 +112,7 @@ POST /v1/conversations/01J…/messages
 | GET | `/v1/documents/:id` | 详情，含版本列表 |
 | GET | `/v1/documents/:id/versions/:vid/text` | 抽取出的正文（`text/markdown`） |
 | GET | `/v1/documents/:id/versions/:vid/raw` | 原始内容，一律 `Content-Type: application/octet-stream` + `Content-Disposition: attachment`（文件名由资料与版本 ID 生成，不含标题）+ `X-Content-Type-Options: nosniff` + `Content-Security-Policy: sandbox`；HTML 不会在页面中渲染 |
-| PATCH | `/v1/documents/:id` | `{ "title"?, "tags"? }`；P2 起支持 `{ "summary" }`（会把 `summary_edited` 置为 1） |
+| PATCH | `/v1/documents/:id` | `{ "title"?, "tags"? }`；`{ "summary" }`（1–1000 字符，编辑当前版本的摘要并把 `summary_edited` 置为 1；之后摘要作业不再覆盖） |
 | POST | `/v1/documents/:id/revoke` | 停止使用 |
 | POST | `/v1/documents/:id/restore` | 恢复使用 |
 | DELETE | `/v1/documents/:id` | P2：彻底删除，返回 202 和 `job_id` |

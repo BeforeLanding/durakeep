@@ -102,6 +102,8 @@ export class PiRuntime implements RuntimePort {
         agent: {
           model: this.#opts.model,
           maxTurns: input.kind === "background" ? 1 : (this.#opts.maxTurns ?? 8),
+          // 后台会话不带任何扩展和工具（05 §8）：没有 AppCore 的系统提示，也不可能调用工具
+          ...(input.kind === "background" ? { extensions: [], tools: [] } : {}),
           ...(input.instructions ? { instructions: input.instructions } : {}),
         },
       },
