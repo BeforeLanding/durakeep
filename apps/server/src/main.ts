@@ -4,7 +4,7 @@ import { ConversationDirectory, ConversationService, IngressService } from "@dur
 import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { BackgroundModel, JobWorker } from "@durakeep/jobs";
-import { MemoryService } from "@durakeep/memory";
+import { ExtractionService, MemoryService } from "@durakeep/memory";
 import { ReminderService, Scheduler } from "@durakeep/reminders";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
 import { appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
@@ -52,6 +52,8 @@ let healthy = true;
 // 只有 APP_MODE=test 且显式设置 FETCH_ALLOW_LOOPBACK=1 时才放开 127.0.0.1（进程级测试要抓取本机的测试站点）。
 const fetchPolicy: Partial<FetchPolicy> | undefined =
   mode === "test" && process.env.FETCH_ALLOW_LOOPBACK === "1" ? { isPublicIp: (ip) => ip === "127.0.0.1" || isPublicIp(ip) } : undefined;
+const memory = new MemoryService(db, systemClock);
+const background = new BackgroundModel(db, systemClock, () => runtime); // 运行时在后面创建；作业在 runtime.resume() 之后才开始领取
 const knowledge = new KnowledgeService({
   db,
   blobs: new BlobStore(resolve(dataDir, "blobs")),
@@ -60,9 +62,10 @@ const knowledge = new KnowledgeService({
   indexer: createChunkIndexer(db),
   log,
   wake: () => worker.wake(), // worker 在下面创建；wake 只会在它创建之后被调用
-  background: new BackgroundModel(db, systemClock, () => runtime), // 运行时在后面创建；作业在 runtime.resume() 之后才开始领取
+  background,
 });
-const worker = new JobWorker(db, systemClock, knowledge.handlers(), {
+const extraction = new ExtractionService({ db, clock: systemClock, memory, background, runtime: () => runtime, wake: () => worker.wake(), log });
+const worker = new JobWorker(db, systemClock, { ...knowledge.handlers(), ...extraction.handlers() }, {
   log,
   onFinished: async (job) => {
     await knowledge.onJobFinished(job).catch((e: Error) => log({ level: "error", event: "knowledge.on_job_finished", error: e.name }));
@@ -77,7 +80,6 @@ const worker = new JobWorker(db, systemClock, knowledge.handlers(), {
 // 运行时：扩展 = AppCore（静态系统提示）+ AppKnowledge（kb_* 工具）+ AppGuard（会话映射与白名单）
 const directory = new ConversationDirectory(db); // 只依赖 db：工具与 Guard 按 Pi 会话 ID 找 owner，不必等 ConversationService（它依赖 runtime）
 const retrieval = new KnowledgeRetrieval(db);
-const memory = new MemoryService(db, systemClock);
 const reminders = new ReminderService(db, systemClock);
 const scheduler = new Scheduler(db, systemClock, (f) => {
   hub.publish({ ownerId: f.ownerId, event: "notification", data: { id: f.notification.id, kind: "reminder", title: f.notification.title, body: f.notification.body, link: f.notification.link } });
@@ -110,6 +112,7 @@ await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
 await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
 worker.start(); // 后台作业要用运行时，所以在它就绪之后才开始领取
+extraction.start(); // 空闲 10 分钟的会话 → 候选记忆提取（FR-MEM-04）
 
 const webDist = resolve(import.meta.dirname, "../../web/dist");
 const { app } = createApp({
@@ -144,6 +147,7 @@ async function shutdown(signal: string) {
   closing = true;
   log({ level: "info", event: "shutdown", signal });
   await server.close();
+  extraction.stop();
   await scheduler.stop();
   await worker.stop(); // 等待执行中的作业结束
   await runtime.close(); // 等待任务代码返回，并关闭共享连接

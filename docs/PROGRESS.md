@@ -146,6 +146,12 @@
 
 ---
 
+## 2026-11-18 T-24 候选记忆提取
+- 改动：**packages/memory/src/extract.ts**（ExtractionService；memory 包新增对 jobs 的依赖，仅 workspace 链接，锁文件只多一条 link）：`scan()` 空闲触发（周期 60 s，main.ts 启动 / 关闭时 start / stop）→ `extract_memory` 作业 → 后台会话（ADR-10，输入只含用户与助手文本，不含工具结果）→ JSON 数组 → 校验（kind / key / value≤200 / scope）→ 敏感过滤（提示词 + 关键词表兜底：健康、财务、政治宗教、凭据）→ 与 confirmed 同值丢弃 → `rememberTx(status: "candidate")`（事务内再查 suppression）→ 同一事务推进 `extract_cursor:<conv>`。输出无法解析时 `redo` 加一、换 requestId 重问（同 T-23）。main.ts：MemoryService 与 BackgroundModel 提前创建，作业处理器 = 知识库 + 提取。faux 的 demo / test 回复对提取请求返回 `[]`。
+- 测试：tests/int/extract.test.ts 6 个：解析与敏感词；**空闲 + ≥4 条 → 候选**（敏感 / 非法 kind / 非法 key 被过滤、候选不改变集合版本、提示里无工具结果、游标推进、无新活动不重复入队）；不足 4 条不调用模型且游标不动、攒够后只处理游标之后；**R5**（模型思考期间删除原记忆 → 不被写回；拒绝过的候选再次提取不出现）；与 confirmed 同值丢弃；非 JSON 重试；未空闲 / 已归档不扫描。pnpm lint 通过；pnpm test 45 文件 245 用例通过；test:recovery 见本条末尾。无真实模型调用。
+- 与 07 §5.4 的偏离 / 说明：①回看窗口最近 120 条可展示条目——超过这个量的长会话，游标之前未处理的更早内容会被跳过（不是错误，只是漏提）。②敏感关键词表偏宽，“收入”“基金”“政治”等词出现就丢，宁可漏提不误提。
+- 已知缺口：提取质量（模型是否真的遵守“只提取明确说出的稳定偏好”）没有用真实模型评估——需要用户批准的付费调用，成本约几厘；前端候选标签沿用 T-26 的页面，没有在浏览器里用真实候选手动走通；提取作业没有进程级崩溃测试（后台会话机制本身的 R14 已覆盖）。
+
 ## 2026-11-18 T-23 后台会话与摘要
 - 改动：packages/jobs 新增 `BackgroundModel`（ADR-10）：作业的专用后台会话（ID 记在 app_jobs.pi_conversation_id，创建与复用；条件更新防并发覆盖）、`requestId = job:<id>:<stage>`、答案进 checkpoint；故障点 `background.after_create` / `background.after_answer`。runtime-pi：后台会话创建时 `extensions: []`、`tools: []`、`maxTurns: 1`。knowledge：资料 ready 时在同一事务里入队 `summarize` 作业（dedupe `summarize:<version_id>`），处理器读正文（≤18000 字符，约 12k tokens）→ 后台会话 → 只取“- ”开头的要点行（≤5 条、每条≤80 字）→ `UPDATE … WHERE summary_edited = 0` 写回；`PATCH /v1/documents/:id {summary}` 编辑当前版本摘要并置 `summary_edited=1`。main.ts：JobWorker 改为在 `runtime.resume()` 之后才 `recover()` / `start()`（后台作业要用运行时）。demo / test 的 faux 对摘要请求返回固定要点。
 - 测试：tests/int/summary.test.ts 5 个（cleanSummary；后台会话无工具、无 AppCore 提示、正文包在 `<document>` 里、会话 ID 已记录；作业运行期间用户编辑 → 不被覆盖；编辑校验；输出无要点 → 重试并复用同一会话）。**R14**：tests/recovery/r14.test.ts——子进程在 `background.after_answer` 被杀，恢复后摘要写回、**faux callCount = 0**、仍是同一个后台会话，×20 通过；另测 `background.after_create`（孤儿会话，恢复后新建并完成）。pnpm lint 通过；pnpm test 44 文件 239 用例通过。无真实模型调用。

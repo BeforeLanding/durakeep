@@ -182,6 +182,7 @@ interface VectorIndex { upsert(chunkId: number, v: Float32Array): Promise<void>;
 - 执行：作业 `extract_memory`，走后台会话（ADR-10）。输入只包含新增的用户消息和助手回答的文本，不包含工具结果，避免把资料内容误当成用户事实。
 - 过滤：schema 校验 → 与 suppression 表比对 → 与现有的 confirmed 记忆比较，值相同的丢弃 → 命中敏感类别（健康、财务、政治宗教、他人的私人信息）的丢弃。敏感判断由提示词约束，再加一份关键词表兜底。
 - 防止删除的记忆被写回来：作业提交前，在同一个事务中再查一次 suppression 表，然后才写入 candidate。
+- 实现（`packages/memory/src/extract.ts`）：`ExtractionService.scan()` 每 60 秒找出“空闲 ≥10 分钟、且最后活动时间晚于 `extract_seen:<conv>`”的会话并入队（dedupe = 会话 + 最后活动时间）；“新增 ≥4 条用户消息”在作业里读 transcript（最近 120 条可展示条目，按条目 ID 大于 `extract_cursor:<conv>` 过滤）判断，不足则不推进游标。一次最多收 5 项；`evidence_entry_id` 必须是本次输入里的条目，否则退回区间最后一条。值与现有 confirmed 相同的丢弃；不同的作为 candidate 保留，确认时才取代旧值。游标与候选在同一个事务里写入。
 
 ## 6. 删除与遗忘
 

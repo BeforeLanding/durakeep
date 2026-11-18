@@ -6,11 +6,20 @@ import { fauxAssistantMessage as msg, fauxProvider as provider } from "@earendil
 /** test / demo 模式下服务进程使用的 faux：固定回复，零费用。 */
 export function demoFaux() {
   const faux = provider();
-  faux.setResponses(Array.from({ length: 10_000 }, () => (ctx) => (isSummaryRequest(ctx as never) ? msg(DEMO_SUMMARY) : msg("这是演示模式的回复。"))));
+  faux.setResponses(Array.from({ length: 10_000 }, () => (ctx) => (isSummaryRequest(ctx as never) ? msg(DEMO_SUMMARY) : isExtractionRequest(ctx as never) ? msg(DEMO_EXTRACTION) : msg("这是演示模式的回复。"))));
   return faux;
 }
 
+const DEMO_EXTRACTION = "[]";
+
 const DEMO_SUMMARY = "- 演示模式的摘要（脚本生成，不是模型输出）";
+
+/** 后台候选记忆提取请求（见 memory 的 ExtractionService）。 */
+function isExtractionRequest(ctx: { messages: { role: string; content?: unknown }[] }): boolean {
+  const last = ctx.messages[ctx.messages.length - 1];
+  const text = Array.isArray(last?.content) ? (last.content as { text?: string }[]).map((p) => p.text ?? "").join("") : String(last?.content ?? "");
+  return text.includes("<conversation>\n");
+}
 
 /** 后台摘要请求的输入带 document 标签包裹（见 knowledge 的摘要作业）。 */
 function isSummaryRequest(ctx: { messages: { role: string; content?: unknown }[] }): boolean {
@@ -27,6 +36,7 @@ export function demoScriptedFaux() {
   const faux = provider();
   const step = (ctx: { messages: { role: string; content?: unknown }[] }) => {
     if (isSummaryRequest(ctx)) return msg(DEMO_SUMMARY);
+    if (isExtractionRequest(ctx)) return msg(DEMO_EXTRACTION);
     const last = ctx.messages[ctx.messages.length - 1];
     const text = Array.isArray(last?.content)
       ? (last.content as { text?: string }[]).map((p) => p.text ?? "").join("")

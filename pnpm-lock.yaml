@@ -144,6 +144,9 @@ importers:
       '@durakeep/db':
         specifier: workspace:*
         version: link:../db
+      '@durakeep/jobs':
+        specifier: workspace:*
+        version: link:../jobs
 
   packages/reminders:
     dependencies:
