@@ -63,6 +63,7 @@ const knowledge = new KnowledgeService({
   log,
   wake: () => worker.wake(), // worker 在下面创建；wake 只会在它创建之后被调用
   background,
+  purgeLogPath: resolve(dataDir, "purge-log.jsonl"),
 });
 const extraction = new ExtractionService({ db, clock: systemClock, memory, background, runtime: () => runtime, wake: () => worker.wake(), log });
 const worker = new JobWorker(db, systemClock, { ...knowledge.handlers(), ...extraction.handlers() }, {

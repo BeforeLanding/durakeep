@@ -146,6 +146,12 @@
 
 ---
 
+## 2026-11-18 T-25 删除语义
+- 改动：db 迁移 9（`app_documents.purged_at`、`app_document_refs`，同步 04）。**packages/knowledge/src/purge.ts**：`requestPurge`（同一事务：purging、片段 inactive、取消该资料的采集 / 摘要作业、入队 `purge_document`，幂等）与 `purge_document` 处理器（分阶段可重入，见 07 §6 第 0 条；purge-log 先记后删，只含 ID 与时间）；`#finish` 遇到 purging 不再把资料改回 ready。`KnowledgeService.purge / noteReferences / referencingConversations`；kb_search / kb_get_source 返回结果时记下“这个会话见过这份资料”。接口：`DELETE /v1/documents/:id`（202）、`GET /v1/documents/:id/conversations`。main.ts 传入 `data/purge-log.jsonl`。前端资料详情页：“彻底删除”（确认框逐条说明三类无法删除的副本，并提示未归档的引用会话数）、引用会话列表与归档按钮、**摘要的展示与编辑（补上 T-23 的前端缺口）**。
+- 测试：tests/int/purge.test.ts 4 个：**FR-KB-08**（请求返回即不可检索；作业后片段 / FTS / 摘要 / blob 全部清除、只留墓碑、详情 404；purge-log 恰一行且不含标题和正文；同样内容可重新收藏）；幂等与 owner 隔离；**摘要作业运行期间被彻底删除**（作业被取消、不写回、最终干净）；引用记录（经 Pi + 真实工具；归档；别人看不到；删除后记录保留）。迁移计数测试改为 9。pnpm lint 通过；pnpm test 见下；test:recovery 见下。内置浏览器里用 demo 手动走通：详情页显示摘要与“彻底删除”，确认框文案正确，确认后回到列表、资料消失，服务日志里 `purge_document` 作业成功。无真实模型调用。
+- 意外：①资料状态筛选下拉里“删除中”出现两次——STATUS 表里新旧两个键都映射到同一文案，已合并。②demo 数据目录是临时目录，所以没有验证 purge-log.jsonl 的实际文件位置（测试里验证了内容）。
+- 已知缺口：①**T-25 之前产生的会话没有引用记录**，所以旧会话不会出现在“引用过这份资料的会话”里（没有回填；回填要扫 transcript，需要你决定）。②purge 作业没有进程级崩溃测试（阶段可重入是按设计写的，只有进程内测试）。③记忆的 `source` 若指向被删资料，记忆本身不会随之删除（07 §6 没有要求）。④界面确认用浏览器原生 `confirm`，没有做自定义对话框。⑤备份恢复后按 purge-log 重放删除属于 T-30。
+
 ## 2026-11-18 T-24 候选记忆提取
 - 改动：**packages/memory/src/extract.ts**（ExtractionService；memory 包新增对 jobs 的依赖，仅 workspace 链接，锁文件只多一条 link）：`scan()` 空闲触发（周期 60 s，main.ts 启动 / 关闭时 start / stop）→ `extract_memory` 作业 → 后台会话（ADR-10，输入只含用户与助手文本，不含工具结果）→ JSON 数组 → 校验（kind / key / value≤200 / scope）→ 敏感过滤（提示词 + 关键词表兜底：健康、财务、政治宗教、凭据）→ 与 confirmed 同值丢弃 → `rememberTx(status: "candidate")`（事务内再查 suppression）→ 同一事务推进 `extract_cursor:<conv>`。输出无法解析时 `redo` 加一、换 requestId 重问（同 T-23）。main.ts：MemoryService 与 BackgroundModel 提前创建，作业处理器 = 知识库 + 提取。faux 的 demo / test 回复对提取请求返回 `[]`。
 - 测试：tests/int/extract.test.ts 6 个：解析与敏感词；**空闲 + ≥4 条 → 候选**（敏感 / 非法 kind / 非法 key 被过滤、候选不改变集合版本、提示里无工具结果、游标推进、无新活动不重复入队）；不足 4 条不调用模型且游标不动、攒够后只处理游标之后；**R5**（模型思考期间删除原记忆 → 不被写回；拒绝过的候选再次提取不出现）；与 confirmed 同值丢弃；非 JSON 重试；未空闲 / 已归档不扫描。pnpm lint 通过；pnpm test 45 文件 245 用例通过；test:recovery 见本条末尾。无真实模型调用。

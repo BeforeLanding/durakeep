@@ -27,6 +27,12 @@ async function ownerOf(deps: KnowledgeToolDeps, conversationId: unknown): Promis
 
 /** AppKnowledge（05 §5）：3 个只读工具 + 2 个写工具。写工具走 operations.once() 并声明 replay: "safe"（ADR-04）。 */
 export function appKnowledgeExtension(deps: KnowledgeToolDeps) {
+  /** 07 §6：记下这个会话看到过哪些资料，彻底删除前据此列出“引用过这份资料的会话”。 */
+  const noteRefs = async (conversationId: string, ownerId: string, r: ToolText) => {
+    const ids = (r.details as { chunk_ids?: unknown }).chunk_ids;
+    if (Array.isArray(ids)) await deps.knowledge.noteReferences(ownerId, conversationId, ids.filter((x): x is number => typeof x === "number"));
+  };
+
   const kbSearch = defineTool({
     name: "kb_search",
     description: "在用户收藏的资料里检索。返回若干 <source> 片段（带 chunk id、标题、位置）。回答涉及用户资料之前先调用它。",
@@ -38,8 +44,9 @@ export function appKnowledgeExtension(deps: KnowledgeToolDeps) {
     replay: "safe",
     callers: ["model"],
     execute: async (args, api) => {
-      const { ownerId } = await ownerOf(deps, api.conversationId);
+      const { id, ownerId } = await ownerOf(deps, api.conversationId);
       const r = await deps.retrieval.search(ownerId, { query: normalizeText(args.query), topK: args.top_k, tags: args.tags });
+      await noteRefs(id, ownerId, r);
       return fromToolText(r);
     },
   });
@@ -51,8 +58,10 @@ export function appKnowledgeExtension(deps: KnowledgeToolDeps) {
     replay: "safe",
     callers: ["model"],
     execute: async (args, api) => {
-      const { ownerId } = await ownerOf(deps, api.conversationId);
-      return fromToolText(await deps.retrieval.getSource(ownerId, args.chunk_id, args.expand ?? 0));
+      const { id, ownerId } = await ownerOf(deps, api.conversationId);
+      const r = await deps.retrieval.getSource(ownerId, args.chunk_id, args.expand ?? 0);
+      await noteRefs(id, ownerId, r);
+      return fromToolText(r);
     },
   });
 

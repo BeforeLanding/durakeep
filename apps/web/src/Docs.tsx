@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, uuid, type Doc, type Version } from "./api.ts";
 import { fmtTime, useGlobalStream } from "./hooks.ts";
 
-const STATUS: Record<string, string> = { pending: "处理中", ready: "可用", revoked: "已停用", failed: "失败", deleting: "删除中" };
+const STATUS: Record<string, string> = { pending: "处理中", ready: "可用", revoked: "已停用", failed: "失败", purging: "删除中" };
 
 const parseTags = (s: string) => [...new Set(s.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean))];
 
@@ -123,6 +123,8 @@ function Detail({ id }: { id: string }) {
   const [text, setText] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [tags, setTags] = useState("");
+  const [refs, setRefs] = useState<{ id: string; title: string; archived: boolean }[]>([]);
+  const [summary, setSummary] = useState<string | null>(null);
   const load = useCallback(() => {
     api<Doc & { versions: Version[] }>("GET", `/v1/documents/${id}`).then(
       (r) => {
@@ -131,10 +133,35 @@ function Detail({ id }: { id: string }) {
       },
       (e: Error) => setErr(e.message),
     );
+    api<{ items: { id: string; title: string; archived: boolean }[] }>("GET", `/v1/documents/${id}/conversations`).then((r) => setRefs(r.items), () => {});
   }, [id]);
   useEffect(load, [load]);
   useGlobalStream((ev) => ev === "job" && load());
   const cur = d?.versions.find((v) => v.current) ?? d?.versions[0];
+  const purge = () => {
+    const n = refs.filter((r) => !r.archived).length;
+    const ok = window.confirm(
+      `彻底删除后，原文、正文、片段和索引都会被清除，无法恢复。
+
+以下副本无法随之删除：
+` +
+        `1. 对话记录：模型曾经看到过的片段会保留在相关会话里${n > 0 ? `（有 ${n} 个未归档的会话引用过这份资料，建议先归档）` : ""}；
+` +
+        `2. 备份：最多保留 7 天，恢复备份后会按删除记录重新删除；
+` +
+        `3. 模型服务商：已经发送给 DeepSeek 的内容受对方的数据政策约束。
+
+确定彻底删除吗？`,
+    );
+    if (!ok) return;
+    api("DELETE", `/v1/documents/${id}`).then(
+      () => {
+        location.hash = "#/docs";
+      },
+      (e: Error) => setErr(e.message),
+    );
+  };
+  const archive = (convId: string) => api("PATCH", `/v1/conversations/${convId}`, { archived: true }).then(load, (e: Error) => setErr(e.message));
   const act = (what: "revoke" | "restore") => api("POST", `/v1/documents/${id}/${what}`).then(load, (e: Error) => setErr(e.message));
   return (
     <div className="page">
@@ -151,6 +178,11 @@ function Detail({ id }: { id: string }) {
           <div className="row">
             {d.status === "ready" && <button onClick={() => void act("revoke")}>停止使用</button>}
             {d.status === "revoked" && <button onClick={() => void act("restore")}>恢复使用</button>}
+            {d.status !== "purging" && (
+              <button className="danger" onClick={purge}>
+                彻底删除
+              </button>
+            )}
             <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="标签" />
             <button
               onClick={() => {
@@ -177,7 +209,48 @@ function Detail({ id }: { id: string }) {
               </li>
             ))}
           </ul>
-          {cur?.summary && <p className="muted">摘要：{cur.summary}</p>}
+          {cur && summary === null && (
+            <div>
+              <pre className="muted">{cur.summary ? `摘要：
+${cur.summary}` : "摘要：生成中或暂无"}</pre>
+              {cur.summary && <button onClick={() => setSummary(cur.summary)}>编辑摘要</button>}
+            </div>
+          )}
+          {summary !== null && (
+            <div>
+              <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={6} />
+              <div className="row">
+                <button
+                  onClick={() => {
+                    api("PATCH", `/v1/documents/${id}`, { summary }).then(
+                      () => {
+                        setSummary(null);
+                        load();
+                      },
+                      (e: Error) => setErr(e.message),
+                    );
+                  }}
+                >
+                  保存摘要
+                </button>
+                <button onClick={() => setSummary(null)}>取消</button>
+              </div>
+              <p className="muted">编辑后不会再被自动覆盖。</p>
+            </div>
+          )}
+          {refs.length > 0 && (
+            <>
+              <h3>引用过这份资料的会话</h3>
+              <ul className="list">
+                {refs.map((r) => (
+                  <li key={r.id}>
+                    <a href={`#/chat/${r.id}`}>{r.title}</a>
+                    {r.archived ? <span className="tag">已归档</span> : <button className="right" onClick={() => void archive(r.id)}>归档</button>}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           {text !== null && <pre className="doctext">{text}</pre>}
         </>
       )}

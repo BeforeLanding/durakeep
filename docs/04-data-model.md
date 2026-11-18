@@ -114,7 +114,8 @@ CREATE TABLE app_documents (
   error_code    TEXT,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
-  revoked_at    INTEGER
+  revoked_at    INTEGER,
+  purged_at     INTEGER                   -- T-25：彻底删除完成的时间（墓碑）
 );
 CREATE INDEX app_documents_owner ON app_documents(owner_id, status, updated_at DESC);
 CREATE UNIQUE INDEX app_documents_url ON app_documents(owner_id, source_uri) WHERE source_uri IS NOT NULL;
@@ -241,6 +242,15 @@ CREATE TABLE app_notifications (
   UNIQUE (owner_id, dedupe_key)
 );
 CREATE INDEX app_notifications_unread ON app_notifications(owner_id, read_at, created_at DESC);
+
+-- 引用记录（T-25）：哪些会话的检索结果里出现过这份资料；彻底删除前据此列出，用户可以归档这些会话
+CREATE TABLE app_document_refs (
+  owner_id        TEXT NOT NULL,
+  document_id     TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  first_at        INTEGER NOT NULL,
+  PRIMARY KEY (owner_id, document_id, conversation_id)
+);
 
 -- 后台作业 -----------------------------------------------------------
 CREATE TABLE app_jobs (

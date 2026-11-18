@@ -115,7 +115,8 @@ POST /v1/conversations/01J…/messages
 | PATCH | `/v1/documents/:id` | `{ "title"?, "tags"? }`；`{ "summary" }`（1–1000 字符，编辑当前版本的摘要并把 `summary_edited` 置为 1；之后摘要作业不再覆盖） |
 | POST | `/v1/documents/:id/revoke` | 停止使用 |
 | POST | `/v1/documents/:id/restore` | 恢复使用 |
-| DELETE | `/v1/documents/:id` | P2：彻底删除，返回 202 和 `job_id` |
+| DELETE | `/v1/documents/:id` | 彻底删除，返回 202 和 `job_id`。请求返回时资料已是 `purging`、片段已不可检索；原文 / 正文 / 片段 / 索引由 `purge_document` 作业异步清除，完成后列表与详情都是 404 |
+| GET | `/v1/documents/:id/conversations` | `{ items: [{ id, title, archived, last_active_at }] }`：检索结果里出现过这份资料的会话（含已归档），用于彻底删除前归档 |
 | GET | `/v1/chunks/:id` | 引用悬停时用：返回 `{ id, document_id, version_id, title, loc, char_start, char_end, text }`；校验 owner 和 `active`，不满足一律 404 |
 | GET | `/v1/search?q=&top_k=10` | 调试和资料页搜索；与 `kb_search` 使用同一条检索链路 |
 

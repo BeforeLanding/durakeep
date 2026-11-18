@@ -254,6 +254,21 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_notifications_unread ON app_notifications(owner_id, read_at, created_at DESC);
     `,
   },
+  {
+    id: 9,
+    sql: `
+      ALTER TABLE app_documents ADD COLUMN purged_at INTEGER;
+      -- 哪些会话的检索结果里出现过这份资料（07 §6：彻底删除前列出，供用户归档）
+      CREATE TABLE app_document_refs (
+        owner_id        TEXT NOT NULL,
+        document_id     TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        first_at        INTEGER NOT NULL,
+        PRIMARY KEY (owner_id, document_id, conversation_id)
+      );
+      CREATE INDEX app_document_refs_conv ON app_document_refs(owner_id, conversation_id);
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

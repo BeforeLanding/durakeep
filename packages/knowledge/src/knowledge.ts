@@ -2,6 +2,7 @@ import { AppError, fault, type Clock, type Json } from "@durakeep/core";
 import { onceStrict, type SqlDatabase, type SqlExecutor } from "@durakeep/db";
 import { enqueue, JobError, type BackgroundModel, type JobContext, type JobHandler, type JobKind, type JobRow } from "@durakeep/jobs";
 import type { BlobStore } from "./blob.ts";
+import { purgeHandler, requestPurge } from "./purge.ts";
 import { decodeBody } from "./charset.ts";
 import {
   findDocumentByUri,
@@ -59,6 +60,8 @@ export type KnowledgeDeps = {
   wake?: () => void;
   /** 提供后：资料 ready 时自动入队摘要作业（ADR-10），并注册 summarize 处理器。 */
   background?: BackgroundModel;
+  /** purge-log.jsonl 的路径（07 §6）；不提供则不写。 */
+  purgeLogPath?: string;
 };
 
 export type CaptureResult = { documentId: string; jobId: string | null; status: "pending" | "ready" | "revoked" | "failed"; deduplicated: boolean };
@@ -255,6 +258,38 @@ export class KnowledgeService {
     return getDocument(this.#d.db, ownerId, id);
   }
 
+  /** 彻底删除（FR-KB-08）：立即不可检索，原文 / 正文 / 片段 / 索引由 purge_document 作业异步删除。 */
+  async purge(ownerId: string, id: string): Promise<{ documentId: string; jobId: string }> {
+    const r = await requestPurge({ db: this.#d.db, blobs: this.#d.blobs, clock: this.#d.clock, ...(this.#d.wake ? { wake: this.#d.wake } : {}) }, ownerId, id);
+    return r;
+  }
+
+  /** 记录“这个会话的检索结果里出现过这些片段所在的资料”（工具调用时写；重复写入无害）。 */
+  async noteReferences(ownerId: string, conversationId: string, chunkIds: number[]): Promise<void> {
+    if (chunkIds.length === 0) return;
+    const now = this.#d.clock.now();
+    await this.#d.db.run(
+      `INSERT OR IGNORE INTO app_document_refs (owner_id, document_id, conversation_id, first_at)
+       SELECT DISTINCT owner_id, document_id, ?, ? FROM app_chunks WHERE owner_id = ? AND id IN (${chunkIds.map(() => "?").join(",")})`,
+      conversationId,
+      now,
+      ownerId,
+      ...chunkIds,
+    );
+  }
+
+  /** 引用过这份资料的会话（含已归档），最近活动在前。 */
+  async referencingConversations(ownerId: string, documentId: string): Promise<{ id: string; title: string; archived: boolean; lastActiveAt: number }[]> {
+    const rows = await this.#d.db.all<{ id: string; title: string; archived_at: number | null; last_active_at: number }>(
+      `SELECT c.id, c.title, c.archived_at, c.last_active_at FROM app_document_refs r
+         JOIN app_conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id
+        WHERE r.owner_id = ? AND r.document_id = ? ORDER BY c.last_active_at DESC, c.id DESC`,
+      ownerId,
+      documentId,
+    );
+    return rows.map((r) => ({ id: r.id, title: r.title, archived: r.archived_at !== null, lastActiveAt: r.last_active_at }));
+  }
+
   /** 停止使用（FR-KB-08，立即生效、可撤销）：同一个事务里把该资料所有片段置为不可检索。 */
   async revoke(ownerId: string, id: string): Promise<DocumentRow> {
     return this.#transition(ownerId, id, "ready", "revoked");
@@ -280,6 +315,7 @@ export class KnowledgeService {
     return {
       ingest_text: (ctx) => this.#run(ctx, "text"),
       ingest_url: (ctx) => this.#run(ctx, "url"),
+      purge_document: purgeHandler({ db: this.#d.db, blobs: this.#d.blobs, clock: this.#d.clock, ...(this.#d.purgeLogPath ? { logPath: this.#d.purgeLogPath } : {}) }),
       ...(this.#d.background ? { summarize: (ctx: JobContext) => this.#summarize(ctx, this.#d.background!) } : {}),
     };
   }
@@ -431,6 +467,7 @@ export class KnowledgeService {
     await this.#d.db.transaction(async (tx) => {
       await tx.run("UPDATE app_document_versions SET status = 'ready' WHERE owner_id = ? AND id = ? AND status IN ('parsing','indexing')", ownerId, version.id);
       const cur = await getDocument(tx, ownerId, doc.id);
+      if (cur.status === "purging") return; // 彻底删除已开始：不得把资料改回 ready
       const placeholder = cur.sourceType === "url" && cur.title === cur.sourceUri;
       const title = placeholder && extractedTitle ? Array.from(extractedTitle).slice(0, MAX_TITLE_CHARS).join("") : cur.title;
       // revoked 的资料保持 revoked（用户的决定优先）；其余置为 ready

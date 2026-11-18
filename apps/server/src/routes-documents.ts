@@ -161,6 +161,18 @@ export function mountDocumentRoutes(
     const body = (await readJson(c)) as { title?: unknown; tags?: unknown; summary?: unknown } | null;
     return c.json(presentDoc(await knowledge.update(c.get("owner").id, c.req.param("id"), body ?? {})));
   });
+  // 彻底删除（FR-KB-08）：立即不可检索，其余异步
+  app.delete("/v1/documents/:id", async (c) => {
+    const r = await knowledge.purge(c.get("owner").id, c.req.param("id"));
+    return c.json({ document_id: r.documentId, job_id: r.jobId }, 202);
+  });
+  // 引用过这份资料的会话（彻底删除前列出，用户可以归档它们）
+  app.get("/v1/documents/:id/conversations", async (c) => {
+    const ownerId = c.get("owner").id;
+    await knowledge.detail(ownerId, c.req.param("id")); // 不存在 / 别人的 → 404
+    const list = await knowledge.referencingConversations(ownerId, c.req.param("id"));
+    return c.json({ items: list.map((x) => ({ id: x.id, title: x.title, archived: x.archived, last_active_at: x.lastActiveAt })) });
+  });
   app.post("/v1/documents/:id/revoke", async (c) => c.json(presentDoc(await knowledge.revoke(c.get("owner").id, c.req.param("id")))));
   app.post("/v1/documents/:id/restore", async (c) => c.json(presentDoc(await knowledge.restore(c.get("owner").id, c.req.param("id")))));
 
