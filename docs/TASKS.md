@@ -19,7 +19,7 @@ P0 | T-01 Pi 最小链路与故障注入框架 | done | |
 | P1 | T-15 检索与知识工具 | done | 采集→检索→回答跑通；写工具 R2 ×20 通过 |
 | P1 | T-16 引用解析与校验 | done | |
 | P1 | T-17 检索评测集与脚本 | done | Recall@10 96.7%；9 篇语料、缺版本类题，见 PROGRESS |
-| P1 | T-18 Web 前端 | done | 录屏未做，见 PROGRESS |
+| P1 | T-18 Web 前端 | done | 已补齐[演示录屏](assets/demo.gif) |
 | P1 | T-19 导出与回答评测 | done | G1 通过；人工抽查 20 题只做了 5 题，用户决定不再抽（见 PROGRESS） |
 | P2 | T-20 记忆存储与工具 | done | FR-MEM-01/02/03 集成测试通过；缺 R2 ×20 |
 | P2 | T-21 profile section | done | K5 在真实记忆上复测通过 |

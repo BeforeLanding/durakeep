@@ -1,6 +1,6 @@
 # durakeep
 
-[English](README.en.md)
+[![CI](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml/badge.svg)](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml) · [English](README.en.md)
 
 durakeep 是一个在本机运行的单用户知识库和日常助理。收藏资料后，可以带着引用提问、保存长期偏好，也可以用自然语言设置一次性提醒。[pi-durable](https://www.npmjs.com/package/@earendil-works/pi-durable) 负责持久化执行，服务重启后可恢复未完成的对话任务。
 
@@ -22,7 +22,7 @@ pnpm demo
 
 把鼠标移到回答中的 `[1]` 上，就能查看引用的原文。
 
-![对话引用及悬停展开的原文](docs/assets/chat-citations.png)
+![演示：回答流式生成，悬停引用查看原文，提醒到点后打开未读通知](docs/assets/demo.gif)
 
 ![设置与健康页中的运行状态、备份、月度用量和偏好设置](docs/assets/settings-health.png)
 

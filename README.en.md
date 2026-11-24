@@ -1,6 +1,6 @@
 # durakeep
 
-[简体中文](README.md)
+[![CI](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml/badge.svg)](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml) · [简体中文](README.md)
 
 durakeep is a single-user knowledge base and daily assistant that runs on your machine. Save material, ask questions with citations, keep long-term preferences, and set one-time reminders in natural language. [pi-durable](https://www.npmjs.com/package/@earendil-works/pi-durable) provides durable execution so unfinished chat runs can recover after a restart.
 
@@ -22,7 +22,7 @@ Open [http://127.0.0.1:4777](http://127.0.0.1:4777) and sign in with the demo pa
 
 Hover over `[1]` in the answer to read the original passage.
 
-![Chat answer with the source passage open on hover](docs/assets/chat-citations.png)
+![Demo showing a streamed answer, a source passage opened on hover, and a live reminder notification](docs/assets/demo.gif)
 
 ![Settings and health page with service metrics, backup, monthly usage, and preferences](docs/assets/settings-health.png)
 
