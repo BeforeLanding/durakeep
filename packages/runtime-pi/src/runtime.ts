@@ -17,9 +17,11 @@ import { collectRunChunkIds, toAppEntry, toSnapshotLive, type PiEntryLike } from
 import { context, type PiHandle } from "./start.ts";
 
 export type PiRuntimeOptions = {
-  model: { provider: string; modelId: string };
+  model: ModelChoice | (() => Promise<ModelChoice>);
   maxTurns?: number;
 };
+
+type ModelChoice = { provider: string; modelId: string };
 
 const WEEKDAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 
@@ -96,11 +98,15 @@ export class PiRuntime implements RuntimePort {
   }
 
   async createConversation(input: { kind: "chat" | "background"; instructions?: string }) {
+    const selection = this.#opts.model;
+    const model = typeof selection === "function" ? await selection() : selection;
     const c = await this.#pi.harness.createConversation(
       {
         ownership: { kind: "ownerless" },
         agent: {
-          model: this.#opts.model,
+          model,
+          // pi-ai 1.5.0 的 DeepSeek flash 与 v4-pro 都显式支持 low。
+          ...(model.provider === "deepseek" ? { thinkingLevel: "low" as const } : {}),
           maxTurns: input.kind === "background" ? 1 : (this.#opts.maxTurns ?? 8),
           // 后台会话不带任何扩展和工具（05 §8）：没有 AppCore 的系统提示，也不可能调用工具
           ...(input.kind === "background" ? { extensions: [], tools: [] } : {}),
@@ -253,7 +259,7 @@ export class PiRuntime implements RuntimePort {
 
   async usage(): Promise<UsageSummary> {
     const u = await this.#pi.harness.usage(context);
-    return { models: u.models as unknown as Record<string, Json>, tools: u.tools as unknown as Record<string, Json> };
+    return { models: u.models, tools: u.tools as unknown as Record<string, Json> };
   }
 
   async backupInto(path: string) {

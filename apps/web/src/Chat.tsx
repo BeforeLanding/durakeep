@@ -20,7 +20,7 @@ const REASON: Record<string, string> = {
   unresolved: "正文有标记但没有对应引用",
 };
 
-export function Chat({ convId }: { convId: string | undefined }) {
+export function Chat({ convId, budgetWarning }: { convId: string | undefined; budgetWarning: string | null }) {
   const [convs, setConvs] = useState<Conv[]>([]);
   const loadConvs = useCallback(() => {
     api<{ items: Conv[] }>("GET", "/v1/conversations").then((r) => setConvs(r.items.filter((c) => !c.archived)));
@@ -39,13 +39,13 @@ export function Chat({ convId }: { convId: string | undefined }) {
         ))}
       </aside>
       <section className="conv">
-        {convId ? <ConversationView key={convId} id={convId} onActivity={loadConvs} /> : <div className="muted pad">选择或新建一个对话。</div>}
+        {convId ? <ConversationView key={convId} id={convId} onActivity={loadConvs} budgetWarning={budgetWarning} /> : <div className="muted pad">选择或新建一个对话。</div>}
       </section>
     </div>
   );
 }
 
-function ConversationView({ id, onActivity }: { id: string; onActivity: () => void }) {
+function ConversationView({ id, onActivity, budgetWarning }: { id: string; onActivity: () => void; budgetWarning: string | null }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [live, setLive] = useState<Live>({ running: false, tools: [], queued: 0 });
   const [hasEarlier, setHasEarlier] = useState(false);
@@ -124,6 +124,7 @@ function ConversationView({ id, onActivity }: { id: string; onActivity: () => vo
         <div ref={endRef} />
       </div>
       {err && <div className="error pad">{err}</div>}
+      {budgetWarning ? <div className="banner" role="status">{budgetWarning}</div> : null}
       <form
         className="composer"
         onSubmit={(e) => {

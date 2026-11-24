@@ -72,7 +72,8 @@ POST /v1/conversations/01J…/messages
   "ingress_id": "01J…",
   "submission_id": "…",
   "status": "dispatched",
-  "deduplicated": false
+  "deduplicated": false,
+  "budget_warning": null
 }
 ```
 
@@ -82,6 +83,7 @@ POST /v1/conversations/01J…/messages
 - 每分钟最多 30 条（按 owner），超出返回 429。
 - `status` 可能是 `accepted`（已持久化但尚未交给 Pi，例如 Harness 正在重启），也可能是 `dispatched`。两者都表示“不会丢失”。
 - POST 不等待回答。回答通过 SSE 推送。
+- 月度预算已达到 100% 时，`budget_warning` 返回面向用户的提示文本，响应仍为 202 或幂等重试的 200。低于上限时返回 `null`。对话页通过全局流更新超支提示。
 
 **会话对象：**
 
@@ -167,7 +169,7 @@ POST /v1/conversations/01J…/messages
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/v1/reminders?status=active\|fired\|cancelled` | 列表；每项带 `local`、`timezone` 和 `next_fire_at` |
-| POST | `/v1/reminders` | `{ client_request_id, text, local_datetime, timezone, document_id? }`；时间已过去时返回 422 `time_in_past` |
+| POST | `/v1/reminders` | `{ client_request_id, text, local_datetime, timezone?, document_id? }`；缺省时用 owner 的时区，时间已过去时返回 422 `time_in_past` |
 | PATCH | `/v1/reminders/:id` | `{ text?, local_datetime?, timezone?, expected_revision }` |
 | POST | `/v1/reminders/:id/cancel` | 取消 |
 | GET | `/v1/notifications?unread=1` | 通知列表 |
@@ -198,12 +200,20 @@ POST /v1/conversations/01J…/messages
 | POST | `/v1/admin/backup` | 立即入队并返回 202 `{ "job_id": "…" }`，通过作业接口查结果。可带 `{ "client_request_id": "<UUID>" }`；同 ID 重试返回 200 和原作业 |
 | POST | `/v1/admin/delivery/resume` | 人工确认后恢复投递，返回 200 `{ "delivery_paused": false }` 并立即唤醒 Scheduler 补发到期提醒。重复调用仍返回相同状态 |
 
+`GET /v1/usage` 缺省查询当前 UTC 自然月，显式的 `month` 必须为 `YYYY-MM`。响应包含 `month`、`models`（每项为 `model, input_tokens, output_tokens, cache_read_tokens, cost_usd`）、`total_cost_usd`、`monthly_budget_usd`、`usage_ratio`、`warning_80`、`exceeded_100`。使用比例为费用除以当前预算（0.8 表示 80%），历史查询也使用当前预算。
+
+运行时每分钟、UTC 月界、用量查询、发送消息、设置更新及模型作业领取前同步累计用量；用量增量按同步观测月份入账。升级前已有累计量作为初始基线，缺少逐笔时间戳的未观测用量无法追溯到精确月份。优先用运行时上报的费用增量；该值为零时，用新增 token 按模型目录价估算。
+
+达到 80% 或 100% 时分别生成一条当月去重的站内通知。达到 100% 后，`summarize` 和 `extract_memory` 保持排队且不消耗重试次数，已领取的作业可以完成。调高预算至当月用量以上或进入新月份会重新检查队列。其他作业和站内提醒按各自的调度规则继续运行。
+
 ## 8. 设置（P3）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/v1/settings` | `{ chat_model, monthly_budget_usd, timezone, backup_keep }` |
-| PATCH | `/v1/settings` | 只能修改上述字段；`chat_model` 只能是 `deepseek-flash` 或 `deepseek-v4-pro` |
+| PATCH | `/v1/settings` | 部分更新上述字段并返回完整设置。未知字段或无效值返回 400 |
+
+`chat_model` 仅支持 `deepseek-flash` 和 `deepseek-v4-pro`，未设置时使用合法的 `CHAT_MODEL`，否则使用 `deepseek-flash`。新建的 dev/prod 会话采用该选项。test/demo 继续使用 faux。月度预算默认 5 美元，只接受有限正数。备份保留默认 7 份，只接受正的安全整数。时区使用 IANA 名称并写入 `app_owners.timezone`，从此用于 `/v1/me`、新输入信封和提醒缺省时区。
 
 ## 9. SSE
 
@@ -235,7 +245,10 @@ event: notification   data: {"id":"…","kind":"reminder","title":"提醒","body
 event: job            data: {"id":"…","kind":"ingest_url","status":"succeeded","document_id":"…"}
 event: runtime        data: {"status":"ok"|"restarting"|"failed"}   （连接建立后立即发一次当前状态）
 event: unread         data: {"count":3}
+event: budget         data: {"budget_warning":null}
 ```
+
+`budget` 在连接建立及超支状态变化时推送。值为提示文本或 `null`。
 
 ## 10. CLI（`apps/server/src/cli.ts`）
 

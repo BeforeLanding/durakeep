@@ -17,7 +17,7 @@ export function useGlobalStream(onEvent: (event: string, data: unknown) => void)
   useEffect(() => {
     const es = new EventSource("/v1/stream");
     const handler = (name: string) => (e: MessageEvent<string>) => onEvent(name, JSON.parse(e.data));
-    for (const n of ["job", "notification", "runtime", "unread"]) es.addEventListener(n, handler(n) as EventListener);
+    for (const n of ["job", "notification", "runtime", "unread", "budget"]) es.addEventListener(n, handler(n) as EventListener);
     return () => es.close();
   }, []);
 }

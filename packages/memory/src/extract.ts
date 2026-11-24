@@ -52,9 +52,11 @@ export class ExtractionService {
   readonly #runtime: () => RuntimePort;
   readonly #wake: () => void;
   readonly #log: Log;
+  readonly #ownerId: string | undefined;
+  readonly #canScan: () => boolean;
   #timer: ReturnType<typeof setInterval> | undefined;
 
-  constructor(deps: { db: SqlDatabase; clock: Clock; memory: MemoryService; background: BackgroundModel; runtime: () => RuntimePort; wake: () => void; log?: Log }) {
+  constructor(deps: { db: SqlDatabase; clock: Clock; memory: MemoryService; background: BackgroundModel; runtime: () => RuntimePort; wake: () => void; ownerId?: string; canScan?: () => boolean; log?: Log }) {
     this.#db = deps.db;
     this.#clock = deps.clock;
     this.#memory = deps.memory;
@@ -62,6 +64,8 @@ export class ExtractionService {
     this.#runtime = deps.runtime;
     this.#wake = deps.wake;
     this.#log = deps.log ?? (() => {});
+    this.#ownerId = deps.ownerId;
+    this.#canScan = deps.canScan ?? (() => true);
   }
 
   handlers(): Partial<Record<JobKind, JobHandler>> {
@@ -84,12 +88,13 @@ export class ExtractionService {
    * “新增 ≥4 条用户消息”要读 transcript，放在作业里判断。返回入队数量。
    */
   async scan(): Promise<number> {
+    if (!this.#canScan()) return 0;
     const now = this.#clock.now();
     const rows = await this.#db.all<{ id: string; owner_id: string; last_active_at: number }>(
       `SELECT c.id, c.owner_id, c.last_active_at FROM app_conversations c
-        WHERE c.kind = 'chat' AND c.archived_at IS NULL AND c.last_active_at <= ?
+        WHERE c.owner_id = COALESCE(?, c.owner_id) AND c.kind = 'chat' AND c.archived_at IS NULL AND c.last_active_at <= ?
           AND c.last_active_at > COALESCE((SELECT CAST(value_json AS INTEGER) FROM app_settings WHERE key = 'extract_seen:' || c.id), 0)`,
-      now - IDLE_MS,
+      this.#ownerId ?? null, now - IDLE_MS,
     );
     for (const r of rows) {
       await this.#db.transaction(async (tx) => {

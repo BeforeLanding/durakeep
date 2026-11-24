@@ -7,7 +7,7 @@ import { BackgroundModel, JobWorker } from "@durakeep/jobs";
 import { ExtractionService, MemoryService } from "@durakeep/memory";
 import { ReminderService, Scheduler } from "@durakeep/reminders";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, readPurgeLog, replayPurgeLog, type FetchPolicy } from "@durakeep/knowledge";
-import { appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
+import { appCompaction, appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { AuthService } from "./auth.ts";
@@ -17,13 +17,16 @@ import { createApp, type LogEvent } from "./app.ts";
 import { BackupService, startDailyBackup } from "./backup.ts";
 import { EventHub } from "./hub.ts";
 import { listen } from "./listen.ts";
+import { isChatModel, readChatModel } from "./settings.ts";
+import { UsageMeter } from "./usage.ts";
 
 const mode = readAppMode();
 // demo：临时数据目录（除非显式指定），固定口令 demo
 const dataDir = resolve(process.env.DATA_DIR ?? (mode === "demo" ? mkdtempSync(resolve(tmpdir(), "durakeep-demo-")) : "data"));
 const port = Number(process.env.PORT ?? 4777);
 const host = "127.0.0.1"; // 只监听 loopback（FR-AUTH-03）
-const chatModel = process.env.CHAT_MODEL ?? "deepseek-flash";
+const configuredModel = process.env.CHAT_MODEL;
+const chatModel = isChatModel(configuredModel) ? configuredModel : "deepseek-flash";
 
 const log = (e: LogEvent) => console.log(JSON.stringify({ ts: new Date().toISOString(), ...e }));
 
@@ -48,6 +51,8 @@ if (mode === "demo" && !(await db.get("SELECT id FROM app_owners LIMIT 1"))) {
 }
 const hub = new EventHub();
 let healthy = true;
+let closing = false;
+const ownerId = (await db.get<{ id: string }>("SELECT id FROM app_owners LIMIT 1"))?.id;
 
 // 采集（T-13）：blob 目录、知识服务、作业队列。抓取策略默认严格；
 // 只有 APP_MODE=test 且显式设置 FETCH_ALLOW_LOOPBACK=1 时才放开 127.0.0.1（进程级测试要抓取本机的测试站点）。
@@ -69,9 +74,17 @@ const knowledge = new KnowledgeService({
   background,
   purgeLogPath,
 });
-const extraction = new ExtractionService({ db, clock: systemClock, memory, background, runtime: () => runtime, wake: () => worker.wake(), log });
+let budgetPaused: boolean | undefined;
+const extraction = new ExtractionService({
+  db, clock: systemClock, memory, background, runtime: () => runtime, wake: () => worker.wake(),
+  ownerId, canScan: () => budgetPaused === false, log,
+});
 const backup = new BackupService(db, systemClock, dataDir, (path) => runtime.backupInto(path));
 const worker = new JobWorker(db, systemClock, { ...knowledge.handlers(), ...extraction.handlers(), backup: backup.handler }, {
+  ownerId,
+  refreshModelBudget: async () => {
+    if (ownerId) await usage.sync(ownerId).catch(onUsageError);
+  },
   log,
   onFinished: async (job) => {
     await knowledge.onJobFinished(job).catch((e: Error) => log({ level: "error", event: "knowledge.on_job_finished", error: e.name }));
@@ -82,6 +95,17 @@ const worker = new JobWorker(db, systemClock, { ...knowledge.handlers(), ...extr
     });
   },
 });
+function applyBudgetGate(paused: boolean) {
+  if (budgetPaused === paused) return;
+  budgetPaused = paused;
+  worker.setModelJobsPaused(paused);
+  if (paused || closing) extraction.stop();
+  else extraction.start();
+}
+function onUsageError(error: unknown) {
+  log({ level: "warn", event: "usage.sync_failed", error: (error as Error).name });
+  applyBudgetGate(true);
+}
 
 // 运行时：扩展 = AppCore（静态系统提示）+ AppKnowledge（kb_* 工具）+ AppGuard（会话映射与白名单）
 const directory = new ConversationDirectory(db); // 只依赖 db：工具与 Guard 按 Pi 会话 ID 找 owner，不必等 ConversationService（它依赖 runtime）
@@ -97,6 +121,7 @@ const useFaux = mode === "test" || mode === "demo";
 const pi = await startPi({
   mode,
   db: raw,
+  settings: { compaction: appCompaction },
   ...(useFaux ? { faux: mode === "demo" ? demoScriptedFaux() : demoFaux() } : {}),
   extensions: [appCoreExtension({ memory: true, reminders: true }), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appMemoryExtension({ db, conversations: directory, memory }), appProfileExtension({ conversations: directory, memory }), appRemindersExtension({ db, conversations: directory, reminders }), appGuardExtension({ conversations: directory })],
   onReport: (r) => log({ level: r.kind === "storage_failed" ? "error" : "warn", event: "pi.report", kind: r.kind }),
@@ -109,8 +134,10 @@ const pi = await startPi({
   },
 });
 const runtime = new PiRuntime(pi, {
-  model: useFaux ? { provider: "faux", modelId: "faux-1" } : { provider: "deepseek", modelId: chatModel },
+  model: useFaux ? { provider: "faux", modelId: "faux-1" } : async () => ({ provider: "deepseek", modelId: await readChatModel(db, chatModel) }),
 });
+const usage = new UsageMeter(db, systemClock, () => runtime.usage(), hub, (_, paused) => applyBudgetGate(paused));
+if (ownerId) await usage.sync(ownerId, true);
 
 const conversations = new ConversationService(db, runtime, systemClock);
 const ingress = new IngressService(db, runtime, systemClock, conversations, log);
@@ -118,7 +145,7 @@ await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
 await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
 worker.start(); // 后台作业要用运行时，所以在它就绪之后才开始领取
-extraction.start(); // 空闲 10 分钟的会话 → 候选记忆提取（FR-MEM-04）
+const stopUsage = ownerId ? usage.start(ownerId, onUsageError) : undefined;
 
 const webDist = resolve(import.meta.dirname, "../../web/dist");
 const { app } = createApp({
@@ -133,6 +160,8 @@ const { app } = createApp({
   citations: new CitationValidator(db),
   wakeJobs: () => worker.wake(),
   backup,
+  usage,
+  chatModel,
   hub,
   ...(existsSync(webDist) ? { staticDir: webDist } : {}),
   log,
@@ -151,16 +180,17 @@ const stopDailyBackup = startDailyBackup(systemClock, backup, () => worker.wake(
 const server = await listen(app.fetch, { host, port });
 log({ level: "info", event: "listening", port: server.port, mode });
 
-let closing = false;
 async function shutdown(signal: string) {
   if (closing) return;
   closing = true;
   log({ level: "info", event: "shutdown", signal });
   await server.close();
+  await stopUsage?.();
   extraction.stop();
   await stopDailyBackup();
   await scheduler.stop();
   await worker.stop(); // 等待执行中的作业结束
+  if (ownerId) await usage.sync(ownerId).catch(onUsageError);
   await runtime.close(); // 等待任务代码返回，并关闭共享连接
   lock.release();
   process.exit(0);

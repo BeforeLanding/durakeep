@@ -299,19 +299,19 @@ CREATE TABLE app_events (
 );
 CREATE INDEX app_events_recent ON app_events(created_at DESC);
 
-CREATE TABLE app_usage_monthly (
+CREATE TABLE app_usage_monthly (        -- 迁移 10；month 按 UTC 自然月
   owner_id    TEXT NOT NULL,
   month       TEXT NOT NULL,              -- "2026-11"
   model       TEXT NOT NULL,              -- "deepseek/deepseek-flash"
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_usd    REAL NOT NULL DEFAULT 0,    -- 按目录价估算
+  cost_usd    REAL NOT NULL DEFAULT 0,    -- 优先用运行时费用增量，其次用目录价估算
   PRIMARY KEY (owner_id, month, model)
 );
 
 CREATE TABLE app_settings (
-  key    TEXT PRIMARY KEY,          -- delivery_paused（默认 false）、backup_keep（默认 7）、memory_set_revision:<owner>
+  key    TEXT PRIMARY KEY,          -- delivery_paused、backup_keep、chat_model、monthly_budget_usd:<owner>、usage_baseline:<owner>、memory_set_revision:<owner>
   value_json TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -322,6 +322,8 @@ CREATE TABLE app_schema_migrations (
   applied_at INTEGER NOT NULL
 );
 ```
+
+用量同步在同一事务内更新 `usage_baseline:<owner>` 的逐模型累计快照、`app_usage_monthly` 的增量行和预算通知。新月份继续沿用累计基线；时区取自 `app_owners.timezone`，用于展示、输入信封和提醒时间。
 
 ## 4. 状态机
 

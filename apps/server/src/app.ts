@@ -20,6 +20,8 @@ import { mountDocumentRoutes } from "./routes-documents.ts";
 import { RateLimiter } from "./rateLimit.ts";
 import { staticFiles } from "./static.ts";
 import { latestThrottle } from "./throttle.ts";
+import { readSettings, updateSettings, type ChatModel } from "./settings.ts";
+import { BUDGET_WARNING, type UsageMeter } from "./usage.ts";
 
 // 06 §1 的错误码 → HTTP 状态
 const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 429 | 500 | 502 | 503 | 504> = {
@@ -71,6 +73,8 @@ export type AppDeps = {
   /** 入队 / 重试后唤醒 JobWorker。 */
   wakeJobs?: () => void;
   backup?: BackupService;
+  usage?: UsageMeter;
+  chatModel?: ChatModel;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
   sse?: { throttleMs?: number; keepAliveMs?: number };
   /** 覆盖默认限流（每分钟次数），测试用。 */
@@ -186,6 +190,17 @@ export function createApp(deps: AppDeps) {
     return c.json({ owner_id: o.id, display_name: o.displayName, timezone: o.timezone });
   });
 
+  app.get("/v1/settings", async (c) => c.json(await readSettings(deps.db, c.get("owner").id, deps.chatModel)));
+  app.patch("/v1/settings", async (c) => {
+    const ownerId = c.get("owner").id;
+    const settings = await updateSettings(deps.db, ownerId, await readJson(c), deps.clock.now(), deps.chatModel);
+    await refreshBudget(deps, ownerId);
+    return c.json(settings);
+  });
+
+  const usage = deps.usage;
+  if (usage) app.get("/v1/usage", async (c) => c.json(await usage.get(c.get("owner").id, c.req.query("month"))));
+
   app.get("/v1/admin/health", async (c) => c.json({ delivery_paused: await deliveryPaused(deps.db) }));
 
   app.post("/v1/admin/delivery/resume", async (c) => {
@@ -218,6 +233,15 @@ export function createApp(deps: AppDeps) {
   if (deps.staticDir) app.use("*", staticFiles(deps.staticDir));
 
   return { app, auth, limiter, hub };
+}
+
+async function refreshBudget(deps: AppDeps, ownerId: string): Promise<string | null> {
+  try {
+    return (await deps.usage?.sync(ownerId))?.exceeded_100 ? BUDGET_WARNING : null;
+  } catch (error) {
+    deps.log?.({ level: "warn", event: "usage.sync_failed", error: (error as Error).name });
+    return null;
+  }
 }
 
 function mountConversationRoutes(
@@ -282,7 +306,10 @@ function mountConversationRoutes(
       steer: body?.steer,
     });
     return c.json(
-      { ingress_id: r.ingressId, submission_id: r.submissionId, status: r.status, deduplicated: r.deduplicated },
+      {
+        ingress_id: r.ingressId, submission_id: r.submissionId, status: r.status, deduplicated: r.deduplicated,
+        ...(deps.usage ? { budget_warning: await refreshBudget(deps, owner.id) } : {}),
+      },
       r.deduplicated ? 200 : 202,
     );
   });
@@ -367,7 +394,7 @@ function holdOpen(stream: SSEStreamingApi, clock: Clock, keepAliveMs: number): P
   });
 }
 
-/** 全局流（06 §9.2）：runtime / notification / job / unread，按 owner 过滤。 */
+/** 全局流（06 §9.2）：runtime / notification / job / unread / budget，按 owner 过滤。 */
 function mountGlobalStream(app: Hono<AppEnv>, deps: AppDeps, hub: EventHub) {
   const keepAliveMs = deps.sse?.keepAliveMs ?? 15_000;
   app.get("/v1/stream", (c) => {
@@ -378,6 +405,7 @@ function mountGlobalStream(app: Hono<AppEnv>, deps: AppDeps, hub: EventHub) {
         chain = chain.then(() => stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {}));
       };
       send("runtime", { status: deps.isHealthy && !deps.isHealthy() ? "failed" : "ok" });
+      if (deps.usage) send("budget", { budget_warning: deps.usage.warning(owner.id) });
       const unsubscribe = hub.subscribe((e) => {
         if (e.ownerId === "*" || e.ownerId === owner.id) send(e.event, e.data);
       });

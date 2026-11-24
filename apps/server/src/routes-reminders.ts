@@ -39,7 +39,7 @@ export function mountReminderRoutes(app: Hono<AppEnv>, deps: { db: SqlDatabase; 
     if (typeof crid !== "string" || !UUID.test(crid)) throw new AppError("invalid_request", "client_request_id 必须是 UUID", { issues: [{ path: "client_request_id" }] });
     const args = { text: body?.text ?? null, local_datetime: body?.local_datetime ?? null, timezone: body?.timezone ?? null, document_id: body?.document_id ?? null } as Json;
     const r = await onceStrict(deps.db, owner.id, `http:reminder:${crid}`, "reminder_create", args, async (tx) => {
-      const row = await reminders.createTx(tx, owner.id, { text: body?.text, local_datetime: body?.local_datetime, timezone: body?.timezone, document_id: body?.document_id });
+      const row = await reminders.createTx(tx, owner.id, { text: body?.text, local_datetime: body?.local_datetime, timezone: body?.timezone === undefined ? owner.timezone : body.timezone, document_id: body?.document_id });
       return { id: row.id } satisfies Json;
     });
     reminders.onChange();

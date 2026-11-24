@@ -31,12 +31,14 @@ export function App() {
 function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const route = useRoute();
   const [unread, setUnread] = useState(0);
+  const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
   const refreshUnread = useCallback(() => {
     api<{ unread: number }>("GET", "/v1/notifications?unread=1").then((r) => setUnread(r.unread), () => {});
   }, []);
   useEffect(refreshUnread, [refreshUnread]);
   useGlobalStream((ev, data) => {
     if (ev === "unread") setUnread((data as { count: number }).count);
+    else if (ev === "budget") setBudgetWarning((data as { budget_warning: string | null }).budget_warning);
     else if (ev === "notification") refreshUnread();
   });
 
@@ -80,7 +82,7 @@ function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
         ) : tab === "notifications" ? (
           <Notifications onChange={refreshUnread} />
         ) : (
-          <Chat convId={route[1]} />
+          <Chat convId={route[1]} budgetWarning={budgetWarning} />
         )}
       </main>
     </div>

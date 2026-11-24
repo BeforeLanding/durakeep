@@ -48,12 +48,13 @@ export class BackgroundModel {
 
   /** 复用：已记录就直接用；否则创建并写回。写回用条件更新——并发或崩溃遗留时以先写入者为准，多出来的会话是无害的孤儿（ADR-10）。 */
   async #conversation(rt: RuntimePort, ctx: JobContext, instructions: string): Promise<string> {
-    const row = await this.#db.get<{ pi_conversation_id: string | null }>("SELECT pi_conversation_id FROM app_jobs WHERE id = ?", ctx.job.id);
+    const { ownerId, id } = ctx.job;
+    const row = await this.#db.get<{ pi_conversation_id: string | null }>("SELECT pi_conversation_id FROM app_jobs WHERE owner_id = ? AND id = ?", ownerId, id);
     if (row?.pi_conversation_id) return row.pi_conversation_id;
     const { piConversationId } = await rt.createConversation({ kind: "background", instructions });
     fault("background.after_create"); // 会话已创建、ID 尚未写入作业：留下一个孤儿会话
-    await this.#db.run("UPDATE app_jobs SET pi_conversation_id = ? WHERE id = ? AND pi_conversation_id IS NULL", piConversationId, ctx.job.id);
-    const again = await this.#db.get<{ pi_conversation_id: string }>("SELECT pi_conversation_id FROM app_jobs WHERE id = ?", ctx.job.id);
+    await this.#db.run("UPDATE app_jobs SET pi_conversation_id = ? WHERE owner_id = ? AND id = ? AND pi_conversation_id IS NULL", piConversationId, ownerId, id);
+    const again = await this.#db.get<{ pi_conversation_id: string }>("SELECT pi_conversation_id FROM app_jobs WHERE owner_id = ? AND id = ?", ownerId, id);
     return again!.pi_conversation_id;
   }
 }

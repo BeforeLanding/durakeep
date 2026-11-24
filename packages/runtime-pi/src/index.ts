@@ -1,6 +1,7 @@
 export { startPi, openAppDatabase, context, type PiDeps, type PiHandle } from "./start.ts";
 export { createRealProvider, PaidProviderForbidden } from "./provider.ts";
 export { PiRuntime, formatEnvelopeTime, type PiRuntimeOptions } from "./runtime.ts";
+export { appCompaction } from "./compaction.ts";
 export { demoFaux, demoScriptedFaux } from "./testing/faux.ts";
 export { runAnchor } from "./runAnchor.ts";
 export { appCoreExtension, buildPreamble } from "./extensions/appCore.ts";

@@ -4,13 +4,13 @@ import { enqueue, type JobHandler } from "@durakeep/jobs";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readBackupKeep } from "./settings.ts";
 
 const BACKUP_STAMP = "\\d{8}T\\d{9}Z";
 const BACKUP_NAME = new RegExp(`^app-(${BACKUP_STAMP})\\.sqlite$`);
 const STAGING_NAME = new RegExp(`^(?:app-${BACKUP_STAMP}\\.sqlite\\.partial(?:\\.partial)?|blobs-manifest-${BACKUP_STAMP}\\.json\\.partial)$`);
 const DAY_MS = 86_400_000;
 const DAILY_OFFSET_MS = (3 * 60 + 17) * 60_000;
-const DEFAULT_KEEP = 7;
 
 export function backupStamp(at: number): string {
   return new Date(at).toISOString().replace(/[-:.]/g, "");
@@ -135,9 +135,7 @@ export class BackupService {
     for (const entry of readdirSync(this.#dir, { withFileTypes: true })) {
       if (entry.isFile() && STAGING_NAME.test(entry.name)) rmSync(join(this.#dir, entry.name), { force: true });
     }
-    const setting = await this.#db.get<{ value_json: string }>("SELECT value_json FROM app_settings WHERE key = 'backup_keep'");
-    const keep = Number(setting?.value_json);
-    const retention = Number.isSafeInteger(keep) && keep > 0 ? keep : DEFAULT_KEEP;
+    const retention = await readBackupKeep(this.#db);
 
     // 恢复上次进程在发布后、记录作业完成前中断的情况。
     const previous = jobId === null ? undefined : this.#pairs().find((pair) => pair.jobId === jobId);

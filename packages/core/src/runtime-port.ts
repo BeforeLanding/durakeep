@@ -48,7 +48,10 @@ export type ConversationSnapshot = {
   hasEarlier: boolean;
 };
 
-export type UsageSummary = { models: Record<string, Json>; tools: Record<string, Json> };
+export type UsageSummary = {
+  models: Record<string, { input: number; output: number; cacheRead: number; cost: { total: number } }>;
+  tools: Record<string, Json>;
+};
 
 /** 会话正忙时 submitContinue 抛出。 */
 export class RuntimeBusy extends Error {

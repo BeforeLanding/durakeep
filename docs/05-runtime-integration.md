@@ -62,11 +62,13 @@ export async function startPi(deps: PiDeps): Promise<PiRuntime> {
 | `retry.maxRetries` | 3 | 429 和超时会退避重试 |
 | `restartLimit` | 5（默认） | 崩溃循环的上限 |
 | `afterFailedRun` | `"continue"` | 失败的 run 不卡住排在后面的输入 |
-| `compaction` | `enabled: true`，`modelOverrides["deepseek/deepseek-flash"] = { reserveTokens: 936_000, keepRecentTokens: 16_000, backgroundTokens: 16_000 }`（pro 同理） | 1M 上下文按默认值几乎不会压缩，而长上下文每次请求都要计费。这里把实际触发线压到约 64k，后台在约 48k 时开始压缩。**待验证 T-31**：大的 `reserveTokens` 不能挤占输出上限 |
+| `compaction` | `enabled: true`，`modelOverrides` 对 `deepseek/deepseek-flash` 和 `deepseek/deepseek-v4-pro` 均配置 `{ reserveTokens: 936_000, keepRecentTokens: 16_000, backgroundTokens: 16_000 }` | 1M 上下文的阈值约为 64k（阻塞）和 48k（后台）；需要找到可压缩的历史前缀 |
 | `progress` | 默认（100 ms / 1,000 ms） | — |
 | `followUpMode`、`steeringMode` | 默认（每轮放一条） | — |
 
-每个会话创建时执行 `configure({ model: { provider: "deepseek", modelId: config.chatModel }, thinkingLevel: "low", maxTurns: 8 })`。`config.chatModel` 默认为 `deepseek-flash`。
+dev/prod 创建会话时读取当前 `chat_model`，缺省按合法的 `CHAT_MODEL` 或 `deepseek-flash` 选择。锁定的 pi-ai 1.5.0 目录中，Flash 和 V4 Pro 的 `thinkingLevelMap.low` 均为 `"low"`，新建 DeepSeek 会话使用此级别。交互会话最多 8 轮，后台会话最多 1 轮。test/demo 进程固定使用 `faux/faux-1`。
+
+**T-31 实测（faux）。** 1M 上下文中验证了 48k 至 64k 之间触发后台压缩、超过 64k 触发阻塞压缩。普通回答请求的 `maxTokens` 缺省为 `undefined`，由 provider 决定上限。测试通过内部选项注入 20,000 时，该值原样透传，`reserveTokens` 不参与计算。1.5.0 的公开 `ConversationStreamOptions` 未声明此选项。摘要请求采用 `min(floor(0.8 × reserveTokens), model.maxTokens)`。模型上限为 384,000 时，`reserveTokens=936,000` 观察到摘要请求上限 384,000。对照 `reserveTokens=4,000` 时为 3,200。摘要按实际用量入账，测试中两个回答各使用 1 个输出 token，摘要使用 20 个，累计为 22 个。
 
 ## 4. 扩展与系统提示
 
@@ -235,6 +237,8 @@ export type ConversationSnapshot = {
 `AppEntry` 的转换规则：`app.user` → user；`pi.assistant` → assistant（解析 `<citations>`，解析结果随条目带出，由 knowledge 的 CitationValidator 在展示时校验；runtime-pi 的 observe 转换为异步并串行发出，以便标注哪些引用来自本次 run）；`pi.tool-result` → tool（只保留名称、成败和摘要）；`app.reminder_fired` → event；`pi.compaction` → 一条“较早的对话已压缩”的分隔线；`pi.system` 不展示。
 
 内部实现：`conversation.watch()` 配合 `ConversationTranscript.merge()`；`observe` 的 `from` 对应 `transcript.resume`。**1.5.0 实测**：`Submission.wait()` 返回的 `answer` 是助手条目的 **ID**（数字），取回答文本要再用 `conversation.entries({ minEntryId, maxEntryId })` 读出该条目；`pi.live` 里的 `tools` 是数组，部分回答在 `generation.message`，排队数量在 `pi.inbox.items`。`loadEarlier` 用 `conversation.entries({ maxEntryId: before - 1, order: "descending" })` 逐页向前扫描：条目 ID 有空洞，且 `pi.system` 等不展示，所以要扫到凑够 `limit` 条可展示条目为止。观察者的 `snapshot.entries` 是**该连接已知的全部条目**；用 `from` 重连时只含游标之后的条目。
+
+`usage().models` 按 `provider/modelId` 返回持久化累计的 `input`、`output`、`cacheRead` 和 `cost.total`，覆盖交互、后台会话及自动压缩。累计快照没有自然月字段，应用按同步观测时间入账（06 §7）。
 
 ## 8. 后台会话（ADR-10，P2）
 

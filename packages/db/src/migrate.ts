@@ -269,6 +269,21 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_document_refs_conv ON app_document_refs(owner_id, conversation_id);
     `,
   },
+  {
+    id: 10,
+    sql: `
+      CREATE TABLE app_usage_monthly (
+        owner_id          TEXT NOT NULL,
+        month             TEXT NOT NULL,
+        model             TEXT NOT NULL,
+        input_tokens      INTEGER NOT NULL DEFAULT 0,
+        output_tokens     INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd          REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (owner_id, month, model)
+      );
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {
