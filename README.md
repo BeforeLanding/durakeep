@@ -1,6 +1,19 @@
 # durakeep
 
-[![CI](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml/badge.svg)](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml) · [English](README.en.md)
+<p align="center">
+  <b>在本机运行的单用户知识库与日常助理：带引用的回答，崩溃后能接着干。</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Node.js ≥ 22.19" src="https://img.shields.io/badge/node-%E2%89%A522.19-339933">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="演示：收藏资料、带引用的回答、悬停查看原文、设置提醒并收到通知" width="860">
+</p>
 
 durakeep 是一个在本机运行的单用户知识库和日常助理。收藏资料后，可以带着引用提问、保存长期偏好，也可以用自然语言设置一次性提醒。[pi-durable](https://www.npmjs.com/package/@earendil-works/pi-durable) 负责持久化执行，服务重启后可恢复未完成的对话任务。
 
@@ -22,9 +35,26 @@ pnpm demo
 
 把鼠标移到回答中的 `[1]` 上，就能查看引用的原文。
 
-![演示：回答流式生成，悬停引用查看原文，提醒到点后打开未读通知](docs/assets/demo.gif)
+<details>
+<summary>更多截图：设置与健康页</summary>
 
 ![设置与健康页中的运行状态、备份、月度用量和偏好设置](docs/assets/settings-health.png)
+
+</details>
+
+## 架构一览
+
+```mermaid
+flowchart LR
+    W[Web 前端] --> S[Node 服务<br/>单进程]
+    S --> B[业务模块<br/>资料 · 记忆 · 提醒 · 作业]
+    S --> R[RuntimePort]
+    R --> P[pi-durable<br/>持久执行]
+    B & P --> D[(SQLite + blobs)]
+    P -. 仅自用模式 .-> L[DeepSeek API]
+```
+
+业务模块不直接依赖运行时，对话与工具调用经 `RuntimePort` 交给 pi-durable，因此进程崩溃后可恢复未完成的任务。完整设计见[系统架构](docs/03-architecture.md)。
 
 ## 已完成功能
 

@@ -290,3 +290,9 @@
 - 改动：基于基础调研完成修订调研、PRD、架构、数据模型、Pi 接入规格、API、知识与记忆、测试计划、实施计划、ADR、来源索引、AGENTS.md。
 - 测试：只做了本机无费用验证（Node 24.16.0 / SQLite 3.53.0 FTS5+trigram / Intl.Segmenter 中文分词 / pi-ai 与 chord 1.5.0 tarball 完整性）。未安装依赖，未调用模型。
 - 偏离原调研：见 [01 §8](01-research.md#8-相对原调研的修订清单)。
+
+## 2026-11-24 README 重排与演示 GIF 重录
+
+- 改动：中英文 README 顶部改为居中的一句话定位、CI/Node/许可证徽章和演示 GIF，新增 Mermaid 架构一览，设置页截图折叠。新增 `scripts/record-demo.ts`，可用 `node scripts/record-demo.ts` 重新生成 `docs/assets/demo.gif`（隔离 demo、faux 模型、系统 ffmpeg，不下载任何东西）。
+- GIF：覆盖收藏资料、带引用的回答、悬停原文、设置提醒、通知到达；裁掉等待整分钟的空白，14.5 秒、960×576、10 fps、196,713 字节（旧版 19.3 秒，其中约 8 秒静止）。
+- 测试：未运行 `pnpm test`（只改文档、脚本与图片）；`pnpm lint` 见提交前结果。零付费模型调用。

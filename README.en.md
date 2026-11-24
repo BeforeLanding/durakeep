@@ -1,6 +1,19 @@
 # durakeep
 
-[![CI](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml/badge.svg)](https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml) · [简体中文](README.md)
+<p align="center">
+  <b>A single-user knowledge base and daily assistant on your own machine: cited answers, and it picks up where it left off after a crash.</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/BeforeLanding/durakeep/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Node.js ≥ 22.19" src="https://img.shields.io/badge/node-%E2%89%A522.19-339933">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  · <a href="README.md">简体中文</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="Demo: save a note, get a cited answer, hover to read the source, set a reminder and receive the notification" width="860">
+</p>
 
 durakeep is a single-user knowledge base and daily assistant that runs on your machine. Save material, ask questions with citations, keep long-term preferences, and set one-time reminders in natural language. [pi-durable](https://www.npmjs.com/package/@earendil-works/pi-durable) provides durable execution so unfinished chat runs can recover after a restart.
 
@@ -22,9 +35,26 @@ Open [http://127.0.0.1:4777](http://127.0.0.1:4777) and sign in with the demo pa
 
 Hover over `[1]` in the answer to read the original passage.
 
-![Demo showing a streamed answer, a source passage opened on hover, and a live reminder notification](docs/assets/demo.gif)
+<details>
+<summary>More: settings and health page</summary>
 
 ![Settings and health page with service metrics, backup, monthly usage, and preferences](docs/assets/settings-health.png)
+
+</details>
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    W[Web UI] --> S[Node service<br/>single process]
+    S --> B[Business modules<br/>knowledge · memory · reminders · jobs]
+    S --> R[RuntimePort]
+    R --> P[pi-durable<br/>durable execution]
+    B & P --> D[(SQLite + blobs)]
+    P -. self-use mode only .-> L[DeepSeek API]
+```
+
+Business modules never depend on the runtime directly. Chat and tool calls go through `RuntimePort` to pi-durable, which is why unfinished runs can resume after a crash. See [architecture](docs/03-architecture.md) for the full design.
 
 ## Features
 
