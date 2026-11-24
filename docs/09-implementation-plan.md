@@ -135,8 +135,8 @@
 - 产出：健康页、设置、任务中心运维事件、孤儿后台会话统计、`pnpm test:upgrade`（R11）与[运维手册](runbook.md)。
 
 **T-33 · 演示模式**（0.75）· G2
-- 产出：`pnpm demo`；样例资料（自己撰写或使用 CC 许可的文本）；faux 回复脚本。
-- DoD：没有任何 key 的环境中也能走通 FR-OPS-05；Playwright 冒烟测试通过。
+- 产出：`pnpm demo`、3 篇自撰并预索引的样例资料、调用业务工具的 faux 回复脚本，以及 `pnpm test:e2e`。
+- DoD：在无模型 key 的隔离进程中完成 FR-OPS-05，验证引用原文、偏好和提醒的实际落库，并确认健康页无未捕获错误。
 
 **T-34 · 公开发布材料**（0.75）· T-33
 - 产出：中英文 README（数据说明、持久性边界、截图或 GIF）；DECISIONS 定稿；LICENSE（MIT）。

@@ -22,7 +22,7 @@ import { UsageMeter } from "./usage.ts";
 import { EventStore } from "./events.ts";
 
 const mode = readAppMode();
-// demo：临时数据目录（除非显式指定），固定口令 demo
+// demo：临时数据目录（除非显式指定），固定的公开演示口令。
 const dataDir = resolve(process.env.DATA_DIR ?? (mode === "demo" ? mkdtempSync(resolve(tmpdir(), "durakeep-demo-")) : "data"));
 const port = Number(process.env.PORT ?? 4777);
 const host = "127.0.0.1"; // 只监听 loopback（FR-AUTH-03）
@@ -215,11 +215,18 @@ const { app } = createApp({
   log,
 });
 if (mode === "demo") {
-  const owner = (await db.get<{ id: string }>("SELECT id FROM app_owners LIMIT 1"))!;
+  if (!ownerId) throw new Error("演示账号初始化失败");
+  const seeded: string[] = [];
   for (const [i, d] of DEMO_DOCS.entries()) {
-    await knowledge.captureText(owner.id, { clientRequestId: `00000000-0000-4000-8000-00000000000${i}`, kind: "markdown", title: d.title, text: d.text, tags: d.tags }).catch(() => {});
+    const result = await knowledge.captureText(ownerId, {
+      clientRequestId: `00000000-0000-4000-8000-00000000000${i}`, kind: "markdown", title: d.title, text: d.text, tags: d.tags,
+    });
+    if (!result.deduplicated) seeded.push(result.documentId);
   }
-  log({ level: "info", event: "demo.ready", hint: "口令 demodemo" });
+  await worker.idle();
+  for (const id of seeded) {
+    if ((await knowledge.detail(ownerId, id)).document.status !== "ready") throw new Error(`演示样例索引未就绪：${id}`);
+  }
 }
 scheduler.start(); // 启动时先补发已到期的提醒（FR-REM-04），再按下一次到期时间设置定时器
 const stopDailyBackup = startDailyBackup(systemClock, backup, () => worker.wake(), (error) => {
@@ -228,6 +235,16 @@ const stopDailyBackup = startDailyBackup(systemClock, backup, () => worker.wake(
 });
 const server = await listen(app.fetch, { host, port });
 log({ level: "info", event: "listening", port: server.port, mode });
+if (mode === "demo") {
+  console.log([
+    `演示地址：http://${host}:${server.port}/`,
+    "公开演示口令：demodemo",
+    "试试：收藏：每周五整理本周的学习笔记。",
+    "试试：间隔重复应该如何安排复习？",
+    "试试：记住我喜欢简短总结",
+    "试试：明天晚上八点提醒我复习间隔重复",
+  ].join("\n"));
+}
 
 async function shutdown(signal: string) {
   if (closing) return;

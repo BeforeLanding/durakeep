@@ -20,10 +20,12 @@
 | 接口 | vitest + 进程内 HTTP（`app.request()`）+ faux | 认证、越权、幂等、SSE 重连 | 包含在 `test:int` 中 |
 | 检索评测 | 脚本 | 07 §7.1 | `pnpm eval:retrieval` |
 | 回答评测 | 脚本 + 真实模型 | 07 §7.2 | `pnpm eval:answer`，**需要批准** |
-| 冒烟 | Playwright（P3） | 登录 → 收藏 → 提问 → 看到引用 → 创建提醒 | `pnpm test:e2e`，使用演示模式 |
+| 冒烟 | Playwright（P3） | 登录、样例索引、收藏、带引用问答及悬停原文、保存偏好、提醒、健康页 | `pnpm test:e2e`，使用无模型凭据的隔离演示服务 |
 | 升级 | faux 子进程和集成测试 | 用当前候选依赖打开旧应用 schema、旧任务定义的数据副本 | `pnpm test:upgrade` |
 
 CI：GitHub Actions，`ubuntu-latest` 和 `windows-latest` × Node `22.19.0` 和 `24.x`。CI 环境不配置任何 API key。
+
+演示冒烟在本机执行，暂不加入 CI 矩阵。`pnpm test:e2e` 会先构建 Web，再启动随机回环端口上的临时演示库。Windows 在标准安装路径优先检测 Edge，再检测 Chrome。未检测到这两个通道时，可运行 `pnpm exec playwright install chromium` 准备默认浏览器，也可用 `PLAYWRIGHT_CHANNEL=chrome` / `msedge` 指定现有浏览器。[Playwright 浏览器通道](https://playwright.dev/docs/browsers#google-chrome--microsoft-edge)
 
 ## 3. 故障注入机制
 
@@ -130,7 +132,7 @@ G0 结论写入 `docs/spikes/P0-REPORT.md`：每一项的结果、运行次数�
 | FR-OPS-01 | S11，导出包结构测试 |
 | FR-OPS-02 | R12，以及一次人工恢复演练记录 |
 | FR-OPS-03 | 集成测试（faux）：增量入账、重启、UTC 换月、设置联动、80%/100% 通知去重、后台模型作业暂停与恢复、采集和备份照常运行、提醒不受预算影响、交互超支提示；压缩验证见 05 §3 |
-| FR-OPS-05 | Playwright 冒烟测试（演示模式） |
+| FR-OPS-05 | `pnpm test:e2e` 演示冒烟，加 `tests/int/demo.test.ts` 验证四个真实工具、无命中回复和相对时间提醒 |
 | NFR-03 | 基准脚本：1 万个片段时检索 p95（本机） |
 
 ## 8. 付费回答评测流程
