@@ -6,7 +6,7 @@ import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type Instan
 import { BackgroundModel, JobWorker } from "@durakeep/jobs";
 import { ExtractionService, MemoryService } from "@durakeep/memory";
 import { ReminderService, Scheduler } from "@durakeep/reminders";
-import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, type FetchPolicy } from "@durakeep/knowledge";
+import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, readPurgeLog, replayPurgeLog, type FetchPolicy } from "@durakeep/knowledge";
 import { appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,7 @@ import { AuthService } from "./auth.ts";
 import { DEMO_DOCS } from "./demoData.ts";
 import { resolve } from "node:path";
 import { createApp, type LogEvent } from "./app.ts";
+import { BackupService, startDailyBackup } from "./backup.ts";
 import { EventHub } from "./hub.ts";
 import { listen } from "./listen.ts";
 
@@ -52,21 +53,25 @@ let healthy = true;
 // 只有 APP_MODE=test 且显式设置 FETCH_ALLOW_LOOPBACK=1 时才放开 127.0.0.1（进程级测试要抓取本机的测试站点）。
 const fetchPolicy: Partial<FetchPolicy> | undefined =
   mode === "test" && process.env.FETCH_ALLOW_LOOPBACK === "1" ? { isPublicIp: (ip) => ip === "127.0.0.1" || isPublicIp(ip) } : undefined;
+const blobs = new BlobStore(resolve(dataDir, "blobs"));
+const purgeLogPath = resolve(dataDir, "purge-log.jsonl");
+await replayPurgeLog({ db, blobs, clock: systemClock }, readPurgeLog(purgeLogPath));
 const memory = new MemoryService(db, systemClock);
 const background = new BackgroundModel(db, systemClock, () => runtime); // 运行时在后面创建；作业在 runtime.resume() 之后才开始领取
 const knowledge = new KnowledgeService({
   db,
-  blobs: new BlobStore(resolve(dataDir, "blobs")),
+  blobs,
   clock: systemClock,
   fetchPolicy,
   indexer: createChunkIndexer(db),
   log,
   wake: () => worker.wake(), // worker 在下面创建；wake 只会在它创建之后被调用
   background,
-  purgeLogPath: resolve(dataDir, "purge-log.jsonl"),
+  purgeLogPath,
 });
 const extraction = new ExtractionService({ db, clock: systemClock, memory, background, runtime: () => runtime, wake: () => worker.wake(), log });
-const worker = new JobWorker(db, systemClock, { ...knowledge.handlers(), ...extraction.handlers() }, {
+const backup = new BackupService(db, systemClock, dataDir, (path) => runtime.backupInto(path));
+const worker = new JobWorker(db, systemClock, { ...knowledge.handlers(), ...extraction.handlers(), backup: backup.handler }, {
   log,
   onFinished: async (job) => {
     await knowledge.onJobFinished(job).catch((e: Error) => log({ level: "error", event: "knowledge.on_job_finished", error: e.name }));
@@ -127,6 +132,7 @@ const { app } = createApp({
   reminders,
   citations: new CitationValidator(db),
   wakeJobs: () => worker.wake(),
+  backup,
   hub,
   ...(existsSync(webDist) ? { staticDir: webDist } : {}),
   log,
@@ -139,6 +145,9 @@ if (mode === "demo") {
   log({ level: "info", event: "demo.ready", hint: "口令 demodemo" });
 }
 scheduler.start(); // 启动时先补发已到期的提醒（FR-REM-04），再按下一次到期时间设置定时器
+const stopDailyBackup = startDailyBackup(systemClock, backup, () => worker.wake(), (error) => {
+  log({ level: "error", event: "backup.schedule_failed", error: (error as Error).name });
+});
 const server = await listen(app.fetch, { host, port });
 log({ level: "info", event: "listening", port: server.port, mode });
 
@@ -149,6 +158,7 @@ async function shutdown(signal: string) {
   log({ level: "info", event: "shutdown", signal });
   await server.close();
   extraction.stop();
+  await stopDailyBackup();
   await scheduler.stop();
   await worker.stop(); // 等待执行中的作业结束
   await runtime.close(); // 等待任务代码返回，并关闭共享连接

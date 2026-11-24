@@ -38,7 +38,11 @@ export async function startServer(dataDir: string, port: number, extraEnv: Recor
       /* 还没起来 */
     }
     if (proc.exitCode !== null) throw new Error(`服务提前退出：${out}`);
-    if (Date.now() > deadline) throw new Error(`服务未就绪：${out}`);
+    if (Date.now() > deadline) {
+      proc.kill("SIGKILL");
+      await exited;
+      throw new Error(`服务未就绪：${out}`);
+    }
     await new Promise((r) => setTimeout(r, 50));
   }
   return {

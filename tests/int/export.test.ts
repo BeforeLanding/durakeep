@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ConversationService, IngressService } from "../../packages/conversations/src/index.ts";
-import { systemClock } from "../../packages/core/src/index.ts";
+import { FakeClock, systemClock } from "../../packages/core/src/index.ts";
 import { guardDb, migrate, type SqlDatabase } from "../../packages/db/src/index.ts";
 import { JobWorker } from "../../packages/jobs/src/index.ts";
 import { BlobStore, createChunkIndexer, KnowledgeService } from "../../packages/knowledge/src/index.ts";
+import { MemoryService } from "../../packages/memory/src/index.ts";
+import { ReminderService, Scheduler } from "../../packages/reminders/src/index.ts";
 import { openAppDatabase, PiRuntime, startPi, type PiHandle } from "../../packages/runtime-pi/src/index.ts";
 import { fauxAssistantMessage, fauxProvider } from "../../packages/runtime-pi/src/testing/faux.ts";
 import { createApp, type LogEvent } from "../../apps/server/src/app.ts";
@@ -59,20 +61,19 @@ afterEach(async () => {
 const call = (method: string, path: string, body?: unknown) =>
   h.app.request(path, { method, headers: { Cookie: cookie, Origin: ORIGIN, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
-/** 读 zip 中央目录里的文件名 */
-function zipNames(buf: Buffer): string[] {
-  const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  const n = buf.readUInt16LE(end + 10);
-  let p = buf.readUInt32LE(end + 16);
-  const out: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const nameLen = buf.readUInt16LE(p + 28);
-    const extraLen = buf.readUInt16LE(p + 30);
-    const commentLen = buf.readUInt16LE(p + 32);
-    out.push(buf.subarray(p + 46, p + 46 + nameLen).toString("utf8"));
-    p += 46 + nameLen + extraLen + commentLen;
+/** 导出用 ZIP 的存储方式，按本地文件头读取内容。 */
+function zipFiles(buf: Buffer): Map<string, Buffer> {
+  const entries = new Map<string, Buffer>();
+  let offset = 0;
+  while (buf.readUInt32LE(offset) === 0x04034b50) {
+    const size = buf.readUInt32LE(offset + 18);
+    const nameStart = offset + 30;
+    const nameEnd = nameStart + buf.readUInt16LE(offset + 26);
+    const dataStart = nameEnd + buf.readUInt16LE(offset + 28);
+    entries.set(buf.toString("utf8", nameStart, nameEnd), buf.subarray(dataStart, dataStart + size));
+    offset = dataStart + size;
   }
-  return out;
+  return entries;
 }
 
 test("导出包结构：manifest + 每个版本的 meta.json / text.md / raw；不含认证、会话、幂等与 pi_ 表", async () => {
@@ -84,12 +85,51 @@ test("导出包结构：manifest + 每个版本的 meta.json / text.md / raw；�
   expect(res.headers.get("content-type")).toBe("application/zip");
   expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename="export-\d{8}T\d{6}\.zip"$/);
   const buf = Buffer.from(await res.arrayBuffer());
-  const names = zipNames(buf);
+  const names = [...zipFiles(buf).keys()];
   expect(names[0]).toBe("manifest.json");
   expect(names.filter((n) => n.startsWith("documents/")).map((n) => n.split("/").pop()).sort()).toEqual(["meta.json", "raw.md", "text.md"]);
   expect(names.join("\n")).not.toMatch(/app_auth|app_sessions|app_operations|app_events|pi_/);
   expect(buf.includes(Buffer.from("正文内容。"))).toBe(true); // 资料正文本就应该在导出里（zip 为存储方式，可直接检索）
   expect((await h.app.request("/v1/export")).status).toBe(401);
+});
+
+test("导出 confirmed 和 candidate 及修订、提醒及触发记录，并按当前 owner 计数", async () => {
+  const clock = new FakeClock(Date.UTC(2026, 10, 6, 7));
+  const memory = new MemoryService(db, clock);
+  const reminders = new ReminderService(db, clock);
+  const remember = (id: string, key: string, value: string, status?: "candidate") => memory.remember(id, {
+    kind: "preference", key, value, status, source: { kind: "manual" }, changedBy: "user",
+  });
+  const confirmed = await remember(ownerId, "export.confirmed", "旧值");
+  await memory.update(ownerId, confirmed.memoryId, { value: "新值", expected_revision: confirmed.revision });
+  const candidate = await remember(ownerId, "export.candidate", "候选值", "candidate");
+  const revoked = await remember(ownerId, "export.revoked", "隐藏值");
+  await memory.revoke(ownerId, revoked.memoryId);
+  await db.run("INSERT INTO app_owners (id, display_name, created_at) VALUES ('other-owner', '其他 owner', ?)", clock.now());
+  await remember("other-owner", "export.other", "其他 owner 的记忆");
+  const create = (id: string, text: string) => reminders.create(id, { text, timezone: "UTC", local_datetime: "2026-11-06T07:01" });
+  const schedule = await create(ownerId, "纳入导出的提醒");
+  await create("other-owner", "其他 owner 的提醒");
+  clock.advance(60_000);
+  expect(await new Scheduler(db, clock).tick()).toBe(2);
+
+  const response = await call("GET", "/v1/export");
+  expect(response.status).toBe(200);
+  const files = zipFiles(Buffer.from(await response.arrayBuffer()));
+  const read = (name: string): unknown => JSON.parse(files.get(name)!.toString("utf8"));
+  expect(read("manifest.json")).toMatchObject({
+    counts: { documents: 0, versions: 0, memories: 2, memory_revisions: 3, schedules: 1, occurrences: 1 },
+  });
+  const memories = read("memories.json") as { status: string }[];
+  expect(memories).toHaveLength(2);
+  expect(memories.toSorted((a, b) => b.status.localeCompare(a.status))).toMatchObject([
+    { id: confirmed.memoryId, status: "confirmed", revisions: [{ revision: 1, value: "旧值" }, { revision: 2, value: "新值" }] },
+    { id: candidate.memoryId, status: "candidate", revisions: [{ revision: 1, value: "候选值" }] },
+  ]);
+  expect(read("reminders.json")).toMatchObject({
+    schedules: [{ id: schedule.id, text: "纳入导出的提醒", status: "fired" }],
+    occurrences: [{ schedule_id: schedule.id, revision: 1, fire_at: schedule.nextFireAt }],
+  });
 });
 
 test("S11：日志和导出包里检索不到消息正文、口令、口令哈希和 API key", async () => {

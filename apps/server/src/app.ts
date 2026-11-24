@@ -1,7 +1,7 @@
 import { AppError, type Clock, type ErrorCode } from "@durakeep/core";
 import type { ConversationService, IngressService } from "@durakeep/conversations";
 import type { AppEntry, ConversationSnapshot, RuntimePort } from "@durakeep/core";
-import type { SqlDatabase } from "@durakeep/db";
+import { deliveryPaused, setDeliveryPaused, type SqlDatabase } from "@durakeep/db";
 import type { CitationValidator, KnowledgeService } from "@durakeep/knowledge";
 import type { MemoryService } from "@durakeep/memory";
 import type { ReminderService } from "@durakeep/reminders";
@@ -10,6 +10,7 @@ import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { AuthService, SESSION_TTL_MS, type Owner } from "./auth.ts";
+import type { BackupService } from "./backup.ts";
 import { EventHub } from "./hub.ts";
 import { readJson } from "./http.ts";
 import { presentEntry, presentSnapshot, type CitationMap } from "./present.ts";
@@ -69,6 +70,7 @@ export type AppDeps = {
   staticDir?: string;
   /** 入队 / 重试后唤醒 JobWorker。 */
   wakeJobs?: () => void;
+  backup?: BackupService;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
   sse?: { throttleMs?: number; keepAliveMs?: number };
   /** 覆盖默认限流（每分钟次数），测试用。 */
@@ -182,6 +184,29 @@ export function createApp(deps: AppDeps) {
   app.get("/v1/me", (c) => {
     const o = c.get("owner");
     return c.json({ owner_id: o.id, display_name: o.displayName, timezone: o.timezone });
+  });
+
+  app.get("/v1/admin/health", async (c) => c.json({ delivery_paused: await deliveryPaused(deps.db) }));
+
+  app.post("/v1/admin/delivery/resume", async (c) => {
+    await setDeliveryPaused(deps.db, false, deps.clock.now());
+    deps.reminders?.onChange();
+    return c.json({ delivery_paused: false });
+  });
+
+  const backup = deps.backup;
+  if (backup) app.post("/v1/admin/backup", async (c) => {
+    const body = await readJson(c, true);
+    const id = (body as { client_request_id?: unknown } | null)?.client_request_id;
+    if (body !== null && (typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "client_request_id"))) {
+      throw new AppError("invalid_request", "请求体只接受 client_request_id");
+    }
+    if (id !== undefined && (typeof id !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id))) {
+      throw new AppError("invalid_request", "client_request_id 必须是 UUID", { issues: [{ path: "client_request_id" }] });
+    }
+    const result = await backup.enqueue(c.get("owner").id, id?.toLowerCase());
+    deps.wakeJobs?.();
+    return c.json({ job_id: result.jobId }, result.created ? 202 : 200);
   });
 
   const hub = deps.hub ?? new EventHub();

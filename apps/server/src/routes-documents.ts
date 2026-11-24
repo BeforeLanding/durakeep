@@ -204,7 +204,7 @@ export function mountDocumentRoutes(
   // 导出（06 §7、04 §6）：zip，不含口令哈希、会话、幂等记录、事件与 pi_*
   app.get("/v1/export", async (c) => {
     const now = deps.clock.now();
-    const zip = await buildExport(knowledge, c.get("owner"), now);
+    const zip = await buildExport(deps.db, knowledge, c.get("owner"), now);
     const stamp = new Date(now).toISOString().replace(/[-:]/g, "").slice(0, 15);
     return c.body(new Uint8Array(zip), 200, {
       "Content-Type": "application/zip",

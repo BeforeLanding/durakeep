@@ -1,7 +1,7 @@
 // 提醒（FR-REM-01…04，04 §4.3）：创建 / 修改 / 取消 / 列表，Scheduler，站内通知。
 // 到期由业务库里的 Scheduler 驱动（不是每条提醒一个 sleepUntil 任务）；同一个提醒在线时只通知一次（occurrence 唯一 + 通知 dedupe_key）。
 import { AppError, uuidv7, type Clock } from "@durakeep/core";
-import type { SqlDatabase, SqlExecutor } from "@durakeep/db";
+import { deliveryPaused, type SqlDatabase, type SqlExecutor } from "@durakeep/db";
 import { assertTimezone, describeLocal, localToUtc } from "./time.ts";
 
 export type ScheduleStatus = "active" | "fired" | "cancelled";
@@ -229,7 +229,7 @@ export class Scheduler {
     this.#running = true;
     let fired = 0;
     try {
-      for (;;) {
+      while (!(await deliveryPaused(this.#db))) {
         const now = this.#clock.now();
         const due = await this.#db.all<{ id: string; owner_id: string }>("SELECT id, owner_id FROM app_schedules WHERE status = 'active' AND next_fire_at <= ? ORDER BY next_fire_at ASC, id ASC LIMIT 100", now);
         if (due.length === 0) break;
@@ -250,6 +250,7 @@ export class Scheduler {
 
   /** 距离下一次检查的时间：min(下一次到期, MAX_SLEEP_MS)。 */
   async nextDelay(): Promise<number> {
+    if (await deliveryPaused(this.#db)) return MAX_SLEEP_MS;
     const next = await this.#db.get<{ t: number | null }>("SELECT MIN(next_fire_at) AS t FROM app_schedules WHERE status = 'active'");
     return next?.t == null ? MAX_SLEEP_MS : Math.min(MAX_SLEEP_MS, Math.max(0, next.t - this.#clock.now()));
   }
@@ -265,13 +266,14 @@ export class Scheduler {
 
   async #fire(ownerId: string, id: string): Promise<Fired | undefined> {
     return this.#db.transaction(async (tx) => {
+      if (await deliveryPaused(tx)) return undefined;
       const now = this.#clock.now();
       const s = await tx.get<Raw>(`SELECT ${COLS} FROM app_schedules WHERE owner_id = ? AND id = ?`, ownerId, id);
       if (!s || s.status !== "active" || s.next_fire_at === null || s.next_fire_at > now) return undefined; // 已被修改 / 取消 / 时间改到了以后
       const occId = uuidv7(now);
       const late = Math.max(0, now - s.next_fire_at);
       await tx.run("INSERT INTO app_occurrences (id, schedule_id, revision, fire_at, fired_at, late_ms) VALUES (?, ?, ?, ?, ?, ?)", occId, s.id, s.revision, s.next_fire_at, now, late);
-      await tx.run("UPDATE app_schedules SET status = 'fired', next_fire_at = NULL, updated_at = ? WHERE id = ?", now, s.id);
+      await tx.run("UPDATE app_schedules SET status = 'fired', next_fire_at = NULL, updated_at = ? WHERE owner_id = ? AND id = ?", now, ownerId, s.id);
       const catchup = late >= CATCHUP_THRESHOLD_MS;
       const body = catchup ? `${s.text}（迟到 ${Math.max(1, Math.round(late / 60_000))} 分钟）` : s.text;
       const nid = uuidv7(now);

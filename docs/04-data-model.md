@@ -311,7 +311,7 @@ CREATE TABLE app_usage_monthly (
 );
 
 CREATE TABLE app_settings (
-  key    TEXT PRIMARY KEY,
+  key    TEXT PRIMARY KEY,          -- delivery_paused（默认 false）、backup_keep（默认 7）、memory_set_revision:<owner>
   value_json TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -381,8 +381,10 @@ queued|running → cancelled（用户取消；正在运行的阶段执行完后�
 export-<ts>.zip
   manifest.json            {version:1, exported_at, owner, counts}
   documents/<doc_id>/<version_id>/raw.<ext> 和 text.md、meta.json
-  memories.json            confirmed 与 candidate，含 revisions
-  reminders.json           schedules 与 occurrences
+  memories.json            当前 owner 的 confirmed 与 candidate 数组，每条记录含 source 和 revisions 数组
+  reminders.json           {schedules, occurrences}；均限定当前 owner，occurrences 用 schedule_id 关联
 ```
+
+清单的 `counts` 包含 `documents`、`versions`、`memories`、`memory_revisions`、`schedules`、`occurrences`。
 
 导出时排除：`app_auth`、`app_sessions`、`app_operations`、`app_events` 和 `pi_*`。对话记录作为单独的可选项，导出为 Markdown（P3）。

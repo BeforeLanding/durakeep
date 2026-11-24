@@ -1,4 +1,5 @@
 export { BlobStore, sha256Hex } from "./blob.ts";
+export { readPurgeLog, replayPurgeLog, type PurgeLog } from "./purge.ts";
 export { decodeBody, detectCharset } from "./charset.ts";
 export { extractHtml, extractPlain, normalizeText } from "./extract.ts";
 export { assertRobotsAllows, safeFetch, DEFAULT_POLICY, USER_AGENT, type FetchPolicy } from "./fetch.ts";

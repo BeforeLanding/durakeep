@@ -17,7 +17,7 @@ const TEXT = `# 崩溃恢复\n\n${Array.from({ length: 1200 }, (_, i) => sentenc
 const EXPECTED = chunkMarkdown(TEXT).length; // 批大小 25：必须多于 2 批才能在第 2 批之后留下半成品
 
 /** 服务已停止后用同步接口只读检查数据库。 */
-async function inspect(dir: string) {
+async function inspect(dir: string, jobId: string) {
   const raw = new DatabaseSync(join(dir, "app.sqlite"), { readOnly: true });
   try {
     const q = (sql: string) => raw.prepare(sql).all() as Record<string, unknown>[];
@@ -30,7 +30,7 @@ async function inspect(dir: string) {
       versions: one("SELECT COUNT(*) FROM app_document_versions"),
       docStatus: String(q("SELECT status FROM app_documents")[0]!.status),
       hits: one(`SELECT COUNT(*) FROM app_chunks_fts f JOIN app_chunks c ON c.id = f.rowid WHERE app_chunks_fts MATCH '"崩溃"' AND c.active = 1`),
-      attempts: Number(q("SELECT attempts FROM app_jobs")[0]!.attempts),
+      attempts: Number(raw.prepare("SELECT attempts FROM app_jobs WHERE owner_id = (SELECT id FROM app_owners LIMIT 1) AND id = ? AND kind = 'ingest_text'").get(jobId)?.attempts),
     };
   } finally {
     raw.close();
@@ -55,7 +55,7 @@ test(`R13（索引）× ${REPEAT}：job.mid_index 被杀 → 半成品一致且�
       if (r.status !== 202 || code === 0) failures.push(`#${i} 创建 ${r.status}，退出码 ${code}`);
 
       // 崩溃当时的状态
-      const crashed = await inspect(dir);
+      const crashed = await inspect(dir, created.job_id);
       const crashOk =
         crashed.chunks === 50 && // 恰好 2 批 × 25
         ftsConsistent(crashed.report) &&
@@ -74,7 +74,7 @@ test(`R13（索引）× ${REPEAT}：job.mid_index 被杀 → 半成品一致且�
       }
       await s2.stop();
 
-      const done = await inspect(dir);
+      const done = await inspect(dir, created.job_id);
       const ok =
         doc.status === "ready" &&
         done.versions === 1 &&

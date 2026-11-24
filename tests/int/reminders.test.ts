@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ConversationDirectory, ConversationService } from "../../packages/conversations/src/index.ts";
 import { FakeClock } from "../../packages/core/src/index.ts";
-import { guardDb, migrate, type SqlDatabase } from "../../packages/db/src/index.ts";
+import { guardDb, migrate, setDeliveryPaused, type SqlDatabase } from "../../packages/db/src/index.ts";
 import { CATCHUP_THRESHOLD_MS, describeLocal, localToUtc, ReminderService, Scheduler, type Fired } from "../../packages/reminders/src/index.ts";
 import { appCoreExtension, appGuardExtension, appRemindersExtension, context, openAppDatabase, PiRuntime, startPi, type PiHandle } from "../../packages/runtime-pi/src/index.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "../../packages/runtime-pi/src/testing/faux.ts";
@@ -64,6 +64,27 @@ afterEach(async () => {
 });
 
 const mk = (text: string, local: string, tz = SH) => reminders.create(ownerId, { text, local_datetime: local, timezone: tz });
+
+test("恢复后暂停到期提醒，已认证的人工恢复请求立即唤醒 Scheduler 且只投递一次", async () => {
+  const reminder = await mk("恢复后补发", "2026-11-06T15:05");
+  await setDeliveryPaused(db, true, clock.now());
+  clock.advance(6 * 60_000);
+  scheduler.start();
+  expect(await scheduler.tick()).toBe(0);
+  expect((await reminders.get(ownerId, reminder.id)).status).toBe("active");
+  expect(await reminders.notifications(ownerId)).toEqual([]);
+  const health = () => h.app.request("/v1/admin/health", { headers: { Cookie: cookie } });
+  expect(await (await health()).json()).toEqual({ delivery_paused: true });
+  expect((await h.app.request("/v1/admin/delivery/resume", { method: "POST" })).status).toBe(401);
+  const resumed = await h.app.request("/v1/admin/delivery/resume", { method: "POST", headers: { Cookie: cookie, Origin: ORIGIN } });
+  expect(resumed.status).toBe(200);
+  expect(await resumed.json()).toEqual({ delivery_paused: false });
+  await expect.poll(() => fired.length).toBe(1);
+  expect(await scheduler.tick()).toBe(0);
+  expect(await reminders.notifications(ownerId)).toHaveLength(1);
+  expect((await reminders.list(ownerId))[0]).toMatchObject({ id: reminder.id, status: "fired", lastOccurrence: { revision: 1 } });
+  expect(await (await health()).json()).toEqual({ delivery_paused: false });
+});
 
 // ---------------------------------------------------------------- 时间换算
 

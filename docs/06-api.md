@@ -34,7 +34,7 @@
 | 423 | `locked` | 登录失败次数过多，暂时锁定 |
 | 429 | `rate_limited` | 限流 |
 | 502 / 504 | `fetch_failed` / `fetch_timeout` | 抓取目标网站失败 / 超时（只出现在作业与资料的 `error_code` 里） |
-| 503 | `runtime_unavailable` / `delivery_paused` | Harness 已失效或正在恢复 |
+| 503 | `runtime_unavailable` | Harness 已失效或正在恢复。恢复后的投递暂停状态由认证接口 `GET /v1/admin/health` 返回 |
 
 **限流。** 登录：每分钟 10 次；发消息：每分钟 30 次；采集：每分钟 20 次。按 owner 计数，在内存中计算。
 
@@ -192,11 +192,11 @@ POST /v1/conversations/01J…/messages
 | POST | `/v1/jobs/:id/cancel` | 对 `queued` 和 `running` 有效 |
 | GET | `/v1/events?level=&cursor=` | `app_events` 列表 |
 | GET | `/v1/health` | 不需要认证，只返回 `{ "ok": true }` 或 503 |
-| GET | `/v1/admin/health` | P3：运行时长、数据库大小、待执行和失败的作业数、未读通知数、最近一次备份、Pi 报告计数、投递是否暂停 |
+| GET | `/v1/admin/health` | T-30 返回 `{ "delivery_paused": true }` 或 `false`；运行时长、数据库大小、作业数、未读通知数、最近一次备份及 Pi 报告计数由 T-32 补齐 |
 | GET | `/v1/usage?month=2026-11` | 按模型汇总的 token 数和估算费用，以及预算上限和使用比例 |
-| GET | `/v1/export` | 返回 zip（格式见 04 §6；当前实现为存储方式、整包在内存里构造，P1 只含资料，记忆与提醒随 P2 加入） |
-| POST | `/v1/admin/backup` | P3：立即备份，返回 `job_id` |
-| POST | `/v1/admin/delivery/resume` | P3：恢复备份后，人工确认恢复投递 |
+| GET | `/v1/export` | 返回包含资料、记忆和提醒的 ZIP（格式见 04 §6，采用存储方式并在内存中构造） |
+| POST | `/v1/admin/backup` | 立即入队并返回 202 `{ "job_id": "…" }`，通过作业接口查结果。可带 `{ "client_request_id": "<UUID>" }`；同 ID 重试返回 200 和原作业 |
+| POST | `/v1/admin/delivery/resume` | 人工确认后恢复投递，返回 200 `{ "delivery_paused": false }` 并立即唤醒 Scheduler 补发到期提醒。重复调用仍返回相同状态 |
 
 ## 8. 设置（P3）
 
@@ -243,7 +243,9 @@ event: unread         data: {"count":3}
 |---|---|
 | `pnpm cli init [--timezone=Asia/Shanghai]` | 设置口令（至少 8 个字符）和时区，创建 owner。终端中口令不回显且需输入两次；管道输入时按行读取 stdin（脚本、测试用） |
 | `pnpm cli passwd` | 修改口令（会让所有会话失效）。服务运行时被实例锁拒绝 |
-| `pnpm cli backup` | 服务运行时通过 HTTP 调用备份；服务停止时直接执行 |
-| `pnpm cli restore <file>` | 要求服务已停止；恢复后把投递设为暂停 |
-| `pnpm cli export <dir>` | 离线导出 |
+| `pnpm cli backup` | 停服时获取实例锁并直接备份，打印 SQLite 路径。运行中的实例占锁时，CLI 打印经认证的本机 HTTP 操作指引 |
+| `pnpm cli restore <file>` | 停服时获取实例锁。指定 SQLite 文件，同目录保留原命名的 blob 清单。校验后恢复、重放彻底删除并暂停投递 |
+| `pnpm cli export <dir>` | 停服时获取实例锁，在目标目录生成 `export-<UTC 时间戳>.zip` 并打印路径。格式与 HTTP 导出一致 |
 | `pnpm demo` | 演示模式：先构建前端，再以脚本化 faux 模型（检索 → 带引用作答）、临时数据目录、3 篇样例资料启动；固定口令 `demodemo`（口令至少 8 个字符）。零费用 |
+
+在线备份可向当前服务的 `127.0.0.1:<PORT>` 发送 `POST /v1/admin/backup`，带上已有会话的 `sid` cookie。CLI 以环境变量 `PORT`（默认 4777）显示本机地址。

@@ -70,11 +70,13 @@ export function fault(point: FaultPoint): void {
 | R9 | 同一个 `client_request_id`，不同内容，并发提交 | 一个成功，一个返回 409 | P1 |
 | R10 | 同一个 `client_request_id` 发往不同会话 | 第二次返回 409（入口唯一约束挡住），Pi 中只有一个 submission | P1 |
 | R11 | 依赖升级后仍有未完成的 run | 恢复成功，或者在任务中心明确显示被阻塞，不会静默卡住 | P3 |
-| R12 | 从昨天的备份恢复 | 投递处于暂停状态；资料、记忆、提醒、会话之间的关联都可用；已删除的资料按 purge-log 重新删除 | P3 |
+| R12 | 在线备份后彻底删除一份资料，写入后续变更，停服并用 CLI 恢复 | 重启后投递暂停，保留资料、记忆、提醒、会话及其关联可用；后续普通变更回滚，彻底删除按 purge-log 重放，片段及 FTS 行均清理 | P3 |
 | R13 | 采集作业在 `job.after_fetch` 或 `job.mid_index` 崩溃 | 重试从 checkpoint 继续；不会出现重复的版本或片段；FTS 与片段表一致（04 §5 不变式 2） | P1 |
 | R14 | 后台会话在 `background.after_answer` 崩溃 | 恢复后 faux 的 `callCount` 不增加，结果写回 | P2 |
 | R15 | 连续崩溃（每次启动都在同一个工具里崩溃） | 崩溃 `restartLimit`（默认 5）次后，**该工具调用**以错误结果结束（diagnostic `restart_limit`，模型看到 “interrupted 5 times in a row; it is not run again”，onReport 收到 `task_interrupted`），run 随后正常完成；进程本身不会陷入重启循环。（run 本身以 `restart_limit` 结束只发生在生成阶段反复崩溃时，P0 未覆盖。）| P0 |
 | R16 | 第二个进程试图打开同一个数据目录 | 实例锁拒绝；第一个进程不受影响 | P0 |
+
+R12 每轮使用全新临时目录和 faux provider。分别计量 CLI 恢复耗时、从开始恢复到 HTTP 就绪的耗时，以及快照时间到停服前最后一笔普通变更确认之间的数据损失窗口。
 
 ## 5. P0 内核验证（G0 门槛）
 

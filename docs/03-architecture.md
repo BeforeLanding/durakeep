@@ -78,9 +78,10 @@ main()
  3. db = openDatabase(data/app.sqlite)     ← 一个 NodeSqliteDatabase，WAL，busy_timeout 5s
  4. migrate(db)                            ← app_* 表的迁移；Pi 表由 Pi 自己负责
  5. clock = SystemClock（或演示模式与测试中的 FakeClock）
+    重放 purge-log.jsonl，清理恢复快照重新带回的资料
  6. runtime = PiRuntime.start({ db, clock, ... })
       Harness.open(SqliteStorage.open(db, {prefix:"pi_"}), {models, registry, settings, now, setTimer, onReport})
- 7. recovery.scan()                        ← 见 §6
+ 7. recovery.scan()                        ← 见 §5.5
  8. runtime.resume()                       ← 恢复上一个进程未完成的 run
  9. JobWorker / Scheduler / Outbox 启动
 10. HTTP 开始监听 127.0.0.1:${PORT}
@@ -189,7 +190,7 @@ Scheduler：定时器指向 min(next_fire_at)，最长 60 s 兜底检查一次
 |---|---|---|
 | `app_ingress_events` | `status=accepted` | 用原 requestId 重新提交 |
 | `app_jobs` | `status=running` | 改回 `queued`（单进程，不需要租约） |
-| `app_schedules` | `status=active AND next_fire_at <= now` | 交给 Scheduler 补发，标记迟到 |
+| `app_schedules` | `status=active AND next_fire_at <= now` | 投递开启时由 Scheduler 补发并标记迟到，暂停时保留待触发状态 |
 | `app_outbox` | `status=dispatching` | 站内通知：依据唯一键直接判定成功；外部渠道（P3）：改为 `unknown`，等待核对 |
 | Pi | 未完成的 run 和工具 | `harness.resume()` 处理 |
 
@@ -227,9 +228,9 @@ Scheduler：定时器指向 min(next_fire_at)，最长 60 s 兜底检查一次
 
 ## 8. 备份与恢复
 
-- **备份（ADR-02）：** 通过共享连接执行 `VACUUM INTO 'data/backups/app-<ts>.sqlite'`，同时生成 blob 清单（备份时刻引用到的哈希列表）。blob 不可变，不需要复制，清单用于恢复时校验完整性。
-- **恢复：** `pnpm cli restore <file>`，要求服务已停止 → 把当前文件改名为 `.bak` → 复制备份 → 校验 blob 清单 → 写入 `app_settings.delivery_paused=true` → 启动 → 用户在健康页确认后恢复投递。
-- **保留：** 每天 03:17 备份，保留 7 份。
+- **备份（ADR-02）。** `backup` 作业通过 RuntimePort 在共享连接上执行 `VACUUM INTO`。从 SQLite 快照取出所有未彻底删除版本的原文和正文 blob 哈希，写成同戳的 `blobs-manifest-<ts>.json`。先发布清单，再原子发布 `data/backups/app-<ts>.sqlite`。文件名使用 UTC 毫秒时间戳。blob 内容留在 `data/blobs`，恢复需要该目录和独立的 `data/purge-log.jsonl`。
+- **恢复。** 停服后运行 `pnpm cli restore <file>`。CLI 持有实例锁，在同卷暂存副本上做 `PRAGMA integrity_check`，核对清单与快照引用，并确认重放删除后仍被引用的 blob 齐全。暂存库写入 `app_settings.delivery_paused=true`。当前库先截断检查点 WAL，再保留为 `app.sqlite.bak` 并清理旧 sidecar，最后原子把暂存库换到 `app.sqlite`。CLI 退出前重放删除，启动时再次扫描。管理员通过认证接口核对暂停状态和恢复投递（06 §7）。
+- **保留。** 每天 03:17 UTC 入队一次，服务启动时补做当天已错过的备份。按 `app_settings.backup_keep` 保留最新备份对，缺省为 7 份。轮转只处理命名匹配且清单有效的 SQLite / 清单对，创建备份时清理本服务命名的遗留 `.partial`。
 - **回退（ADR-02 验证失败时）：** 改为停服后复制 `app.sqlite`、`-wal`、`-shm` 三个文件。
 
 ## 9. 可观测性
