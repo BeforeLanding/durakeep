@@ -188,6 +188,9 @@ function localToUtcSafe(local: string, tz: string): number {
 }
 
 export type Fired = { ownerId: string; scheduleId: string; occurrenceId: string; notification: NotificationRow; lateMs: number; catchup: boolean };
+type ExternalReminder = {
+  ownerId: string; occurrenceId: string; now: number; title: string; localTime: string; timezone: string; lateMinutes: number;
+};
 
 /**
  * Scheduler（03 §5）：定时器指向 min(next_fire_at)，最长 MAX_SLEEP_MS 兜底检查一次；启动时先补发已到期的。
@@ -198,14 +201,19 @@ export class Scheduler {
   readonly #db: SqlDatabase;
   readonly #clock: Clock;
   readonly #onFired: (f: Fired) => void;
+  readonly #enqueueExternal?: (tx: SqlExecutor, reminder: ExternalReminder) => Promise<void>;
   #cancel: (() => void) | undefined;
   #running = false;
   #stopped = true;
   #chain: Promise<void> = Promise.resolve();
-  constructor(db: SqlDatabase, clock: Clock, onFired: (f: Fired) => void = () => {}) {
+  constructor(
+    db: SqlDatabase, clock: Clock, onFired: (f: Fired) => void = () => {},
+    enqueueExternal?: (tx: SqlExecutor, reminder: ExternalReminder) => Promise<void>,
+  ) {
     this.#db = db;
     this.#clock = clock;
     this.#onFired = onFired;
+    this.#enqueueExternal = enqueueExternal;
   }
 
   start(): void {
@@ -282,6 +290,11 @@ export class Scheduler {
         "INSERT INTO app_notifications (id, owner_id, dedupe_key, kind, title, body, link, created_at, read_at) VALUES (?, ?, ?, 'reminder', '提醒', ?, ?, ?, NULL) ON CONFLICT(owner_id, dedupe_key) DO NOTHING",
         nid, ownerId, `occ:${occId}`, body, link, now,
       );
+      await this.#enqueueExternal?.(tx, {
+        ownerId, occurrenceId: occId, now, title: s.text,
+        localTime: describeLocal(s.next_fire_at, s.timezone), timezone: s.timezone,
+        lateMinutes: catchup ? Math.max(1, Math.round(late / 60_000)) : 0,
+      });
       return { ownerId, scheduleId: s.id, occurrenceId: occId, lateMs: late, catchup, notification: { id: nid, kind: "reminder", title: "提醒", body, link, createdAt: now, readAt: null } };
     });
   }

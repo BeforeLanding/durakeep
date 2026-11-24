@@ -49,6 +49,8 @@ pnpm web:build
 
 ## 数据传输、持久性与删除
 
+如需在飞书或 Lark 群接收提醒，可在服务账号的环境中设置 `FEISHU_WEBHOOK_URL`，开启机器人签名时再设置 `FEISHU_WEBHOOK_SECRET`。启用后，提醒标题、计划时间和迟到标记会发到该群。若任务页显示「待核对」，先查看群消息，再标记已送达、重发或放弃。[飞书配置与核对流程](docs/runbook.md#飞书外部提醒)
+
 - **模型请求会离开本机。** 自用模式下，DeepSeek API 会接收对话、用于回答的资料片段或记忆，以及后台摘要、候选提取和压缩所需的内容，并产生 API 费用。DeepSeek 开放平台说明了其在中国境内存储个人信息的规则，以及在约定条件下可能对经加密和去标识化的 API 输入输出用于模型改进的规则。[DeepSeek 开放平台隐私政策](https://cdn.deepseek.com/policies/zh-CN/deepseek-open-platform-privacy-policy.html)
 - **应用崩溃后可恢复。** 已接纳的输入和已提交的业务写入可恢复，未持久化的流式回答尾部可能丢失。SQLite 使用 WAL 和 `synchronous=NORMAL`，断电或操作系统崩溃时最近的提交可能回滚。[SQLite 持久性说明](https://www.sqlite.org/pragma.html#pragma_synchronous)
 - **彻底删除立即停止检索。** 后台清理片段、索引、摘要和无引用的原文。恢复旧库时，独立保存的 `purge-log.jsonl` 会重放删除记录。历史对话、旧备份、已导出的文件和模型服务商持有的副本需要分别处理。[删除与遗忘](docs/07-knowledge-memory.md#6-删除与遗忘)

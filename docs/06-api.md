@@ -28,7 +28,7 @@
 | 401 | `unauthenticated` | 未登录或会话过期 |
 | 403 | `origin_mismatch` | 跨站请求 |
 | 404 | `not_found` | 资源不存在，或不属于当前 owner（两种情况不区分） |
-| 409 | `idempotency_conflict` / `conversation_busy` / `revision_conflict` | 冲突 |
+| 409 | `idempotency_conflict` / `conversation_busy` / `revision_conflict` / `invalid_state` | 冲突 |
 | 413 | `too_large` | 超过大小限制（JSON 请求体默认上限 1 MB；文件上传另有 2 MB 上限，在 T-13 实现） |
 | 422 | `ssrf_blocked` / `unsupported_type` / `robots_disallowed` / `extract_failed` / `time_in_past` | 业务规则拒绝（采集类错误码也会出现在作业和资料的 `error_code` 里，不一定是 HTTP 响应） |
 | 423 | `locked` | 登录失败次数过多，暂时锁定 |
@@ -192,6 +192,9 @@ POST /v1/conversations/01J…/messages
 | GET | `/v1/jobs/:id` | 单个作业（`id`、`kind`、`status`、`attempts`、`max_attempts`、`next_attempt_at`（仅排队中）、`error_code`、`error_message`（面向用户，不含堆栈）、`document_id`） |
 | POST | `/v1/jobs/:id/retry` | 只对 `failed` 状态有效：把 attempts 清零，重新排队 |
 | POST | `/v1/jobs/:id/cancel` | 对 `queued` 和 `running` 有效 |
+| GET | `/v1/outbox?status=&cursor=&limit=` | 按 ID 倒序列出当前 owner 的飞书投递，返回 `{ items, next_cursor }` |
+| POST | `/v1/outbox/:id/retry` | 对 `failed` 或 `needs_review` 有效，重置为 `pending`、清零尝试次数并唤醒外发 worker |
+| POST | `/v1/outbox/:id/resolve` | 对 `needs_review` 有效。接受 `{ "resolution": "succeeded" \| "failed" }`，标记已送达或放弃 |
 | GET | `/v1/events?level=&cursor=&limit=` | 当前 owner 的运行报告与运维事件，按 `created_at`、`id` 倒序 |
 | GET | `/v1/health` | 不需要认证，只返回 `{ "ok": true }` 或 503 |
 | GET | `/v1/admin/health` | 运行时长、数据库大小、排队和失败作业数、未读通知、最近备份、Pi 报告、投递暂停和孤儿后台会话数 |
@@ -199,11 +202,15 @@ POST /v1/conversations/01J…/messages
 | GET | `/v1/usage?month=2026-11` | 按模型汇总的 token 数和估算费用，以及预算上限和使用比例 |
 | GET | `/v1/export` | 返回包含资料、记忆和提醒的 ZIP（格式见 04 §6，采用存储方式并在内存中构造） |
 | POST | `/v1/admin/backup` | 立即入队并返回 202 `{ "job_id": "…" }`，通过作业接口查结果。可带 `{ "client_request_id": "<UUID>" }`；同 ID 重试返回 200 和原作业 |
-| POST | `/v1/admin/delivery/resume` | 人工确认后恢复投递，返回 200 `{ "delivery_paused": false }` 并立即唤醒 Scheduler 补发到期提醒。重复调用仍返回相同状态 |
+| POST | `/v1/admin/delivery/resume` | 人工确认后恢复投递，返回 200 `{ "delivery_paused": false }`，立即唤醒 Scheduler 和 OutboxWorker。重复调用仍返回相同状态 |
 
 `/v1/events` 返回 `{ items, next_cursor }`。事件含 `id, level, kind, ref, message, created_at`，其中 `ref` 是已解析的 ID 与状态对象，`message` 是状态码。可按 `info`、`warn` 或 `error` 过滤，`limit` 默认 20、最大 100；无效过滤或游标返回 400。
 
+外部投递记录包含 `id, channel, occurrence_id, status, attempts, next_attempt_at, error_code, created_at, updated_at`。`status` 可取 `pending`、`dispatching`、`succeeded`、`failed`、`unknown`、`needs_review`。`next_attempt_at` 仅在待发送时非空。游标是上一页最后一条记录的 ID，`limit` 默认 20、最大 100。列表与操作响应只返回投递元数据。两种操作成功返回 200 和更新后的记录。记录不属于当前 owner 或不存在时返回 404，状态冲突返回 409 `invalid_state`。人工放弃的记录以 `failed` 和 `error_code: "abandoned"` 表示。
+
 认证健康接口返回 `uptime_ms, db_size_bytes, queued_jobs, failed_jobs, unread_notifications, last_backup_at, pi_reports, delivery_paused, orphaned_background_conversations`。数据库大小为 SQLite 逻辑页数乘页大小，不另计 WAL 文件、blob 或备份。最近备份时间来自最新有效备份对的清单，无备份时为 `null`。Pi 报告为 `{ total, by_kind }`，按原始报告种类累计。孤儿后台会话计数来自最近一次启动扫描。
+
+`feishu_configured` 表示当前进程加载了有效的飞书配置。`outbox_pending` 和 `outbox_needs_review` 分别统计当前 owner 的待发送和待核对记录。健康接口不返回凭据，也不探测飞书。
 
 `GET /v1/usage` 缺省查询当前 UTC 自然月，显式的 `month` 必须为 `YYYY-MM`。响应包含 `month`、`models`（每项为 `model, input_tokens, output_tokens, cache_read_tokens, cost_usd`）、`total_cost_usd`、`monthly_budget_usd`、`usage_ratio`、`warning_80`、`exceeded_100`。使用比例为费用除以当前预算（0.8 表示 80%），历史查询也使用当前预算。
 

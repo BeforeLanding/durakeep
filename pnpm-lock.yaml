@@ -53,6 +53,9 @@ importers:
       '@durakeep/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@durakeep/outbox':
+        specifier: workspace:*
+        version: link:../../packages/outbox
       '@durakeep/reminders':
         specifier: workspace:*
         version: link:../../packages/reminders
@@ -150,6 +153,15 @@ importers:
       '@durakeep/jobs':
         specifier: workspace:*
         version: link:../jobs
+
+  packages/outbox:
+    dependencies:
+      '@durakeep/core':
+        specifier: workspace:*
+        version: link:../core
+      '@durakeep/db':
+        specifier: workspace:*
+        version: link:../db
 
   packages/reminders:
     dependencies:

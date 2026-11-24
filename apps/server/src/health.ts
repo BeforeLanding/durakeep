@@ -1,7 +1,8 @@
 import { deliveryPaused, type SqlDatabase } from "@durakeep/db";
+import { outboxCounts } from "@durakeep/outbox";
 import type { EventStore } from "./events.ts";
 
-export async function adminHealth(db: SqlDatabase, events: EventStore, ownerId: string, lastBackupAt: number | null, orphaned: number) {
+export async function adminHealth(db: SqlDatabase, events: EventStore, ownerId: string, lastBackupAt: number | null, orphaned: number, feishuConfigured: boolean) {
   return db.transaction(async (tx) => {
     const pages = await tx.get<{ page_count: number }>("PRAGMA page_count");
     const pageSize = await tx.get<{ page_size: number }>("PRAGMA page_size");
@@ -20,6 +21,8 @@ export async function adminHealth(db: SqlDatabase, events: EventStore, ownerId: 
       pi_reports: await events.piCounts(tx, ownerId),
       delivery_paused: await deliveryPaused(tx),
       orphaned_background_conversations: orphaned,
+      feishu_configured: feishuConfigured,
+      ...await outboxCounts(tx, ownerId),
     };
   });
 }

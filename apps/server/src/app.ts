@@ -5,6 +5,7 @@ import { setDeliveryPaused, type SqlDatabase } from "@durakeep/db";
 import { readFile } from "node:fs/promises";
 import type { CitationValidator, KnowledgeService } from "@durakeep/knowledge";
 import type { MemoryService } from "@durakeep/memory";
+import { changeOutbox, listOutbox } from "@durakeep/outbox";
 import type { ReminderService } from "@durakeep/reminders";
 import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
@@ -35,6 +36,7 @@ const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 
   idempotency_conflict: 409,
   conversation_busy: 409,
   revision_conflict: 409,
+  invalid_state: 409,
   too_large: 413,
   ssrf_blocked: 422,
   unsupported_type: 422,
@@ -80,6 +82,8 @@ export type AppDeps = {
   chatModel?: ChatModel;
   events?: EventStore;
   orphanedBackgroundConversations?: number;
+  feishuConfigured?: boolean;
+  wakeOutbox?: () => void;
   runbookPath?: string;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
   sse?: { throttleMs?: number; keepAliveMs?: number };
@@ -213,7 +217,24 @@ export function createApp(deps: AppDeps) {
   })));
   app.get("/v1/admin/health", async (c) => c.json(await adminHealth(
     deps.db, events, c.get("owner").id, deps.backup?.latestAt() ?? null, deps.orphanedBackgroundConversations ?? 0,
+    deps.feishuConfigured ?? false,
   )));
+  app.get("/v1/outbox", async (c) => c.json(await listOutbox(deps.db, c.get("owner").id, {
+    status: c.req.query("status"), cursor: c.req.query("cursor"), limit: parseLimit(c.req.query("limit")) ?? 20,
+  })));
+  app.post("/v1/outbox/:id/retry", async (c) => {
+    const record = await changeOutbox(deps.db, c.get("owner").id, c.req.param("id"), "retry", deps.clock.now());
+    deps.wakeOutbox?.();
+    return c.json(record);
+  });
+  app.post("/v1/outbox/:id/resolve", async (c) => {
+    const body = await readJson(c) as { resolution?: unknown } | null;
+    const resolution = body?.resolution;
+    if (resolution !== "succeeded" && resolution !== "failed") {
+      throw new AppError("invalid_request", "resolution 需为 succeeded 或 failed");
+    }
+    return c.json(await changeOutbox(deps.db, c.get("owner").id, c.req.param("id"), resolution, deps.clock.now()));
+  });
   const runbookPath = deps.runbookPath;
   if (runbookPath) app.get("/v1/admin/runbook", async (c) => {
     const body = await readFile(runbookPath, "utf8").catch((e: NodeJS.ErrnoException) => {
@@ -226,6 +247,7 @@ export function createApp(deps: AppDeps) {
   app.post("/v1/admin/delivery/resume", async (c) => {
     await setDeliveryPaused(deps.db, false, deps.clock.now());
     deps.reminders?.onChange();
+    deps.wakeOutbox?.();
     return c.json({ delivery_paused: false });
   });
 

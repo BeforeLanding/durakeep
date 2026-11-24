@@ -29,6 +29,7 @@ flowchart LR
     FS[(data/blobs 原文与正文)]
     LLM[DeepSeek API]
     WEB[公开网页]
+    FEISHU[飞书或 Lark 自定义机器人]
 
     W -- HTTPS/SSE loopback --> H
     H --> IN --> RP --> PI
@@ -38,6 +39,7 @@ flowchart LR
     JW -- 抓取 SSRF 防护 --> WEB
     JW --> KB
     SC --> REM --> OB
+    OB -- HTTPS --> FEISHU
     KB & MEM & REM & JW & SC & OB & IN --> DB
     PI --> DB
     KB --> FS
@@ -59,7 +61,7 @@ packages/
   memory/            记忆的增删改、section 渲染、候选提取
   reminders/         时间解析校验、schedule、Scheduler、occurrence
   jobs/              JobWorker、重试策略
-  outbox/            通知投递（MVP 只有站内）
+  outbox/            飞书投递、有限退避、重启核对与状态查询
 tests/
   recovery/          子进程故障注入
   retrieval/         检索评测（零费用）
@@ -178,10 +180,17 @@ Scheduler：定时器指向 min(next_fire_at)，最长 60 s 兜底检查一次
     INSERT app_occurrences(schedule_id, revision, fire_at) ON CONFLICT DO NOTHING
     INSERT app_notifications(dedupe_key = occ:<id>) ON CONFLICT DO NOTHING
     UPDATE app_schedules SET status=fired
-  提交后通过 SSE 推送站内通知
+    飞书启用时 INSERT app_outbox(channel=feishu_webhook, idempotency_key=occ:<id>, status=pending)
+  提交后通过 SSE 推送站内通知并唤醒 OutboxWorker
 ```
 
 修改或取消提醒，就是在一个事务里更新 `revision` 和 `next_fire_at`。到期判断按当前的 revision 进行，旧的 revision 自然失效。
+
+组合根注入外部入队回调，回调使用调度器传入的事务句柄。提醒包不依赖 outbox。只有已配置的渠道才入队，所有出站请求由 worker 完成，模型工具集合不提供外发能力。
+
+飞书和 Lark 自定义机器人 Webhook 只有推送能力，缺少服务器幂等键与送达查询。每次发送前提交 `dispatching`，请求及读取响应总计 10 秒超时。HTTP 429、503 和明确未发包的连接错误可退避，最多共三次尝试（初次及 30 秒、120 秒后的重试）。明确拒绝直接失败。读超时、连接中途重置或无法确认接受的响应先记为 `unknown`，再转为 `needs_review`。运维事件与去重站内通知和待核对状态一同提交。用户核对群消息后可标记送达、重发或放弃。
+
+外部 worker 领取前在事务内检查 `delivery_paused`，恢复投递后立即唤醒。提醒外发不使用模型，因此不受模型预算限制。[飞书自定义机器人指南](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)
 
 ### 5.5 启动恢复扫描
 
@@ -190,6 +199,7 @@ Scheduler：定时器指向 min(next_fire_at)，最长 60 s 兜底检查一次
 | `app_ingress_events` | `status=accepted` | 用原 requestId 重新提交 |
 | `app_jobs` | `status=running` | 改回 `queued`（单进程，不需要租约） |
 | `app_schedules` | `status=active AND next_fire_at <= now` | 投递开启时由 Scheduler 补发并标记迟到，暂停时保留待触发状态 |
+| `app_outbox` | `status=dispatching` 或 `unknown` | `dispatching` 先转 `unknown`，再将 `unknown` 转为 `needs_review` 并记录事件与通知 |
 | Pi | 未完成的 run 和工具 | `harness.resume()` 处理 |
 
 ## 6. 错误处理与状态映射

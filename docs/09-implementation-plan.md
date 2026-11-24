@@ -142,8 +142,10 @@
 - 产出：中英文 README、两张零费用演示截图、DECISIONS 定稿和 MIT LICENSE。
 - DoD：审计公开文档中的本机路径、凭据和个人数据。README 和 ADR 聚焦使用说明与架构决策，历史验收证据保存在 PROGRESS。**推送到 GitHub 之前要征得用户同意。**
 
-**T-35（可选）· 一个外部通知渠道**（2–3）· G2
-- 只有用户确实需要时才做。做之前先核实目标渠道的幂等和查询能力，并补齐 `app_outbox` 中 unknown 状态的核对逻辑。
+**T-35 · 飞书自定义机器人 Webhook**（2–3）· G2
+- 渠道使用飞书或 Lark 自定义机器人，凭据由部署环境提供。[飞书自定义机器人指南](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot) · [Lark 机器人能力](https://open.larksuite.com/document/client-docs/bot-v3/bot-overview)
+- 自定义机器人 Webhook 无服务端幂等键和已发送消息查询接口。先持久化 `dispatching` 再发送。发出后结果不确定或进程在 `dispatching` 崩溃时，转为 `unknown`，再转为 `needs_review`，生成运维事件和站内通知。用户核对群消息后可标记已送达、重新发送或放弃。
+- DoD：通过本机 mock 验证签名、可重试与不确定错误、暂停恢复、预算独立、人工核销与 S11。R17 在远端确认后杀进程并重复 20 次，每轮只收到一条请求。
 
 ## 3. 关键路径与可以并行的部分
 

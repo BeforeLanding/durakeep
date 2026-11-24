@@ -7,6 +7,7 @@ type Health = {
   uptime_ms: number; db_size_bytes: number; queued_jobs: number; failed_jobs: number; unread_notifications: number;
   last_backup_at: number | null; pi_reports: { total: number; by_kind: Record<string, number> };
   delivery_paused: boolean; orphaned_background_conversations: number;
+  feishu_configured: boolean; outbox_pending: number; outbox_needs_review: number;
 };
 type Usage = {
   month: string; monthly_budget_usd: number; total_cost_usd: number; usage_ratio: number; warning_80: boolean; exceeded_100: boolean;
@@ -86,6 +87,9 @@ export function Settings({ timezone, onTimezone }: { timezone: string; onTimezon
             <div><dt>最近备份</dt><dd>{health.last_backup_at === null ? "暂无" : <time title={new Date(health.last_backup_at).toISOString()}>{fmtTime(health.last_backup_at, timezone)}</time>}</dd></div>
             <div><dt>提醒投递</dt><dd>{health.delivery_paused ? "暂停" : "正常"}</dd></div>
             <div><dt>孤儿后台会话</dt><dd>{health.orphaned_background_conversations}</dd></div>
+            <div><dt>飞书机器人</dt><dd>{health.feishu_configured ? "已配置" : "未配置"}</dd></div>
+            <div><dt>飞书待发送</dt><dd>{health.outbox_pending}</dd></div>
+            <div><dt>飞书待核对</dt><dd><a href="#/jobs">{health.outbox_needs_review}</a></dd></div>
           </dl>
           <details className="ops-reports" open={(health.pi_reports.by_kind.storage_failed ?? 0) > 0}>
             <summary className={health.pi_reports.by_kind.storage_failed ? "error" : ""}>Pi 报告 {health.pi_reports.total} 条</summary>

@@ -5,6 +5,7 @@ import { readAppMode, systemClock } from "@durakeep/core";
 import { acquireInstanceLock, guardDb, InstanceLockedError, migrate, type InstanceLock } from "@durakeep/db";
 import { BackgroundModel, JobWorker } from "@durakeep/jobs";
 import { ExtractionService, MemoryService } from "@durakeep/memory";
+import { enqueueFeishu, feishuFromEnv, OutboxWorker } from "@durakeep/outbox";
 import { ReminderService, Scheduler } from "@durakeep/reminders";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, readPurgeLog, replayPurgeLog, type FetchPolicy } from "@durakeep/knowledge";
 import { appCompaction, appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, presentPiReport, startPi } from "@durakeep/runtime-pi";
@@ -123,11 +124,22 @@ function onUsageError(error: unknown) {
 const directory = new ConversationDirectory(db); // 只依赖 db：工具与 Guard 按 Pi 会话 ID 找 owner，不必等 ConversationService（它依赖 runtime）
 const retrieval = new KnowledgeRetrieval(db);
 const reminders = new ReminderService(db, systemClock);
+const feishu = feishuFromEnv(mode, process.env, () => log({ level: "warn", event: "outbox.config_invalid" }));
+const outbox = ownerId ? new OutboxWorker(db, systemClock, {
+  ownerId,
+  sender: feishu,
+  onReview: (notice) => {
+    hub.publish({ ownerId, event: "notification", data: notice });
+    void reminders.unreadCount(ownerId).then((count) => hub.publish({ ownerId, event: "unread", data: { count } })).catch(eventFailure);
+  },
+  onError: () => log({ level: "error", event: "outbox.worker_failed" }),
+}) : undefined;
 const scheduler = new Scheduler(db, systemClock, (f) => {
   hub.publish({ ownerId: f.ownerId, event: "notification", data: { id: f.notification.id, kind: "reminder", title: f.notification.title, body: f.notification.body, link: f.notification.link } });
   void reminders.unreadCount(f.ownerId).then((count) => hub.publish({ ownerId: f.ownerId, event: "unread", data: { count } }));
   log({ level: "info", event: "reminder.fired", schedule_id: f.scheduleId, late_ms: f.lateMs, catchup: f.catchup });
-});
+  outbox?.wake();
+}, feishu ? enqueueFeishu : undefined);
 reminders.onChange = () => scheduler.wake();
 const useFaux = mode === "test" || mode === "demo";
 const pi = await startPi({
@@ -185,6 +197,7 @@ if (ownerId) {
 const ingressRecovery = await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
 const jobsRequeued = await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
+await outbox?.recover();
 if (ownerId) await events.record(ownerId, "recovery.scan", ingressRecovery.failed ? "warn" : "info", {
   ingress_redispatched: ingressRecovery.redispatched, ingress_failed: ingressRecovery.failed, jobs_requeued: jobsRequeued,
   orphaned_background_conversations: orphanedBackgroundConversations,
@@ -209,6 +222,8 @@ const { app } = createApp({
   chatModel,
   events,
   orphanedBackgroundConversations,
+  feishuConfigured: feishu !== undefined,
+  wakeOutbox: () => outbox?.wake(),
   runbookPath: resolve(import.meta.dirname, "../../../docs/runbook.md"),
   hub,
   ...(existsSync(webDist) ? { staticDir: webDist } : {}),
@@ -229,6 +244,7 @@ if (mode === "demo") {
   }
 }
 scheduler.start(); // 启动时先补发已到期的提醒（FR-REM-04），再按下一次到期时间设置定时器
+outbox?.start();
 const stopDailyBackup = startDailyBackup(systemClock, backup, () => worker.wake(), (error) => {
   log({ level: "error", event: "backup.schedule_failed", error: (error as Error).name });
   if (ownerId) void events.record(ownerId, "backup.failed", "error", {}, "schedule_failed").catch(eventFailure);
@@ -255,6 +271,7 @@ async function shutdown(signal: string) {
   extraction.stop();
   await stopDailyBackup();
   await scheduler.stop();
+  await outbox?.stop();
   await worker.stop(); // 等待执行中的作业结束
   if (ownerId) await usage.sync(ownerId).catch(onUsageError);
   await Promise.all(pendingReports);

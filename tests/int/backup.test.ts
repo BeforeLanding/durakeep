@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -8,6 +8,7 @@ import { FakeClock } from "../../packages/core/src/index.ts";
 import { backupInto, deliveryPaused, guardDb, migrate, type SqlDatabase } from "../../packages/db/src/index.ts";
 import { JobWorker } from "../../packages/jobs/src/index.ts";
 import { BlobStore } from "../../packages/knowledge/src/index.ts";
+import { enqueueFeishu, listOutbox, OutboxWorker } from "../../packages/outbox/src/index.ts";
 import { openAppDatabase } from "../../packages/runtime-pi/src/index.ts";
 
 const START = Date.UTC(2026, 10, 6, 3, 16, 59);
@@ -45,6 +46,29 @@ async function addDocument(id: string, content: string) {
 }
 
 const manifestPath = (file: string) => join(dir, "backups", manifestName(stampFromBackup(file)));
+
+test("恢复的快照中尚待发送的飞书记录进入人工核对", async () => {
+  await db.transaction((tx) => enqueueFeishu(tx, {
+    ownerId: OWNER, occurrenceId: "fixture-occurrence", now: START,
+    title: "备份后可能已收到", localTime: "2026-11-06 03:16 星期五", timezone: "UTC", lateMinutes: 0,
+  }));
+  const file = await service.create();
+  const target = join(dir, "restore-target");
+  mkdirSync(target);
+  await restoreBackup(target, file, clock, openAppDatabase);
+  const restored = guardDb(await openAppDatabase(join(target, "app.sqlite")));
+  try {
+    expect(await deliveryPaused(restored)).toBe(true);
+    expect((await listOutbox(restored, OWNER, { limit: 1 })).items[0]?.status).toBe("unknown");
+    await new OutboxWorker(restored, clock, { ownerId: OWNER }).recover();
+    expect((await listOutbox(restored, OWNER, { limit: 1 })).items[0]).toMatchObject({
+      status: "needs_review", error_code: "restored_snapshot",
+    });
+    expect((await listOutbox(db, OWNER, { limit: 1 })).items[0]?.status).toBe("pending");
+  } finally {
+    await restored.close();
+  }
+});
 
 test("清单以 SQLite 快照为准，默认仅保留最后七对并保留其他文件", async () => {
   const original = await addDocument("before", "snapshot content");

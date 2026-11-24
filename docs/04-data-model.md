@@ -273,20 +273,24 @@ CREATE TABLE app_jobs (
 );
 CREATE INDEX app_jobs_ready ON app_jobs(status, next_attempt_at) WHERE status = 'queued';
 
--- 外部投递（可选 T-35 的预留设计，当前迁移没有此表） ---------------------
+-- 外部投递（迁移 12） --------------------------------------------------
 CREATE TABLE app_outbox (
   id              TEXT PRIMARY KEY,
-  owner_id        TEXT NOT NULL,
-  channel         TEXT NOT NULL,
+  owner_id        TEXT NOT NULL REFERENCES app_owners(id),
+  channel         TEXT NOT NULL CHECK (channel IN ('feishu_webhook')),
   idempotency_key TEXT NOT NULL,
   payload_json    TEXT NOT NULL,
   status          TEXT NOT NULL CHECK (status IN ('pending','dispatching','succeeded','failed','unknown','needs_review')),
   attempts        INTEGER NOT NULL DEFAULT 0,
   external_ref    TEXT,
+  next_attempt_at INTEGER NOT NULL,
+  error_code      TEXT,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
-  UNIQUE (channel, idempotency_key)
+  UNIQUE (owner_id, channel, idempotency_key)
 );
+CREATE INDEX app_outbox_due ON app_outbox(owner_id, status, next_attempt_at);
+CREATE INDEX app_outbox_recent ON app_outbox(owner_id, id DESC);
 
 -- 运维 ---------------------------------------------------------------
 CREATE TABLE app_events (              -- 迁移 11
@@ -389,4 +393,4 @@ export-<ts>.zip
 
 清单的 `counts` 包含 `documents`、`versions`、`memories`、`memory_revisions`、`schedules`、`occurrences`。
 
-导出时排除：`app_auth`、`app_sessions`、`app_operations`、`app_events` 和 `pi_*`。对话记录作为单独的可选项，导出为 Markdown（P3）。
+导出时排除 `app_auth`、`app_sessions`、`app_operations`、`app_events`、`app_outbox` 和 `pi_*`。提醒业务数据仍通过 `reminders.json` 导出。外部投递载荷与远端响应不进入 ZIP，Webhook URL 和签名密钥仅来自运行环境。对话记录作为单独的可选项，导出为 Markdown（P3）。

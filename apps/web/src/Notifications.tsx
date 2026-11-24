@@ -32,6 +32,7 @@ export function Notifications({ onChange }: { onChange: () => void }) {
             <div className="row">
               <strong>{n.title}</strong>
               <span>{n.body}</span>
+              {n.link === "/jobs" && <a href="#/jobs">查看任务</a>}
               <span className="muted right">{fmtTime(n.created_at)}</span>
               {!n.read && (
                 <button

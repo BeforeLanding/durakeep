@@ -7,6 +7,7 @@ export type ErrorCode =
   | "idempotency_conflict"
   | "conversation_busy"
   | "revision_conflict"
+  | "invalid_state"
   | "too_large"
   | "ssrf_blocked"
   | "unsupported_type"

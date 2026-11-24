@@ -83,6 +83,7 @@ test("运维接口认证、同毫秒游标、业主隔离、Pi 报告映射与�
       uptime_ms: expect.any(Number), db_size_bytes: expect.any(Number),
       queued_jobs: 1, failed_jobs: 1, unread_notifications: 1, delivery_paused: true,
       last_backup_at: clock.now(), orphaned_background_conversations: 2,
+      feishu_configured: false, outbox_pending: 0, outbox_needs_review: 0,
       pi_reports: { total: 9, by_kind: Object.fromEntries([...example.map(([kind]) => kind), "storage_failed"].map((kind) => [kind, 1])) },
     });
     expect(health.db_size_bytes).toBeGreaterThan(0);

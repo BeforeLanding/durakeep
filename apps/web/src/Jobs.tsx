@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Job } from "./api.ts";
 import { fmtTime, useGlobalStream } from "./hooks.ts";
+import { Outbox } from "./Outbox.tsx";
 
 const STATUS: Record<string, string> = { queued: "排队中", running: "进行中", succeeded: "已完成", failed: "失败", cancelled: "已取消" };
 const KIND: Record<string, string> = {
@@ -11,6 +12,7 @@ const EVENT: Record<string, string> = {
   "pi.storage_failed": "运行时存储故障", "pi.task_faulted": "运行时任务中断", "pi.task_blocked": "运行时任务受阻",
   "pi.extension_error": "运行时扩展报告", "job.failed": "作业失败", "backup.done": "备份完成", "backup.failed": "备份失败",
   "recovery.scan": "启动恢复扫描", "profile.truncated": "全局记忆已截断",
+  "outbox.needs_review": "飞书投递待核对",
 };
 const LEVEL: Record<string, string> = { info: "信息", warn: "警告", error: "错误" };
 type EventPage = {
@@ -54,6 +56,7 @@ export function Jobs({ timezone }: { timezone: string }) {
           ))}
         </tbody>
       </table></div>
+      <Outbox timezone={timezone} />
       <EventsPanel timezone={timezone} />
     </div>
   );

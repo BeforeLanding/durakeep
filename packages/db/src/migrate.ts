@@ -298,6 +298,28 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_events_recent ON app_events(created_at DESC);
     `,
   },
+  {
+    id: 12,
+    sql: `
+      CREATE TABLE app_outbox (
+        id              TEXT PRIMARY KEY,
+        owner_id        TEXT NOT NULL REFERENCES app_owners(id),
+        channel         TEXT NOT NULL CHECK (channel IN ('feishu_webhook')),
+        idempotency_key TEXT NOT NULL,
+        payload_json    TEXT NOT NULL,
+        status          TEXT NOT NULL CHECK (status IN ('pending','dispatching','succeeded','failed','unknown','needs_review')),
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        external_ref    TEXT,
+        next_attempt_at INTEGER NOT NULL,
+        error_code      TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        UNIQUE (owner_id, channel, idempotency_key)
+      );
+      CREATE INDEX app_outbox_due ON app_outbox(owner_id, status, next_attempt_at);
+      CREATE INDEX app_outbox_recent ON app_outbox(owner_id, id DESC);
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

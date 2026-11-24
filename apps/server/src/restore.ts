@@ -38,6 +38,12 @@ export async function restoreBackup(dataDir: string, source: string, clock: Cloc
     try {
       await migrate(db);
       await setDeliveryPaused(db, true, clock.now());
+      // 备份后的外发无法撤销。快照里的待投递记录在当前时间已可能送达。
+      await db.run(
+        "UPDATE app_outbox SET status = 'unknown', error_code = 'restored_snapshot', updated_at = ? " +
+        "WHERE owner_id IN (SELECT id FROM app_owners) AND status IN ('pending', 'dispatching')",
+        clock.now(),
+      );
       if (manifest.job_id !== null) {
         // 快照中的发起作业还处于 running。该备份已存在，无需在重启时再生成一份。
         await db.run(

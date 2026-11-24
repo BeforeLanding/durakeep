@@ -1,0 +1,10 @@
+{
+  "name": "@durakeep/outbox",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@durakeep/core": "workspace:*",
+    "@durakeep/db": "workspace:*"
+  }
+}

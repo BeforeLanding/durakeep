@@ -20,6 +20,7 @@ test.each(Array.from({ length: 20 }, (_, i) => ({ round: i + 1, restartLimit: i 
   const base = mkdtempSync(join(tmpdir(), "durakeep-upgrade-"));
   const oldDir = join(base, "old");
   const copyDir = join(base, "candidate");
+  let closeCandidate: (() => Promise<void>) | undefined;
   mkdirSync(oldDir);
   try {
     const crash = await runChild(script, { DATA_DIR: oldDir, SCENARIO: "first", FAULT_POINT: "tool.in_execute" });
@@ -36,7 +37,9 @@ test.each(Array.from({ length: 20 }, (_, i) => ({ round: i + 1, restartLimit: i 
     }
     const raw = await openAppDatabase(join(copyDir, "app.sqlite"));
     const db = guardDb(raw);
-    expect(await migrate(db)).toBe(1);
+    closeCandidate = () => db.close();
+    expect(await migrate(db)).toBe(2);
+    expect(await db.all("SELECT id FROM app_migrations WHERE id > 10 ORDER BY id")).toEqual([{ id: 11 }, { id: 12 }]);
     const events = new EventStore(db, systemClock);
     const { auth, app } = createApp({ db, clock: systemClock, events, origin });
     const owner = await auth.initOwner({ password: "fixture password", timezone: "UTC" });
@@ -51,26 +54,27 @@ test.each(Array.from({ length: 20 }, (_, i) => ({ round: i + 1, restartLimit: i 
       onReport: (r) => pending.push(events.recordPi(owner.id, presentPiReport(r))),
     });
     const runtime = new PiRuntime(pi, { model: upgradeModel });
-    try {
-      runtime.resume();
-      expect(await runtime.waitSubmission(fixture.submissionId, AbortSignal.timeout(10_000))).toEqual({ status: "done", answerText: "旧 run 已完成" });
-      const get = async () => {
-        await Promise.all(pending);
-        const response = await app.request("/v1/events", { headers: { Cookie: `sid=${token}` } });
-        expect(response.status).toBe(200);
-        return await response.json() as { items: { kind: string; message: string; ref: Record<string, string> }[] };
-      };
-      await expect.poll(async () => (await get()).items, { timeout: 10_000 }).toContainEqual(expect.objectContaining({
-        kind: "pi.task_blocked", message: "migration_failed", ref: expect.objectContaining({ task_id: fixture.taskId, report_kind: "migration_failed" }),
-      }));
-      const final = await get();
-      expect(final.items.some((e) => e.message === "restart_limit")).toBe(restartLimit);
-      expect(JSON.stringify(final)).not.toContain(UPGRADE_SECRET);
-      expect(faux.state.callCount).toBe(1);
-    } finally {
-      await runtime.close();
-    }
+    closeCandidate = () => runtime.close();
+    runtime.resume();
+    expect(await runtime.waitSubmission(fixture.submissionId, AbortSignal.timeout(10_000))).toEqual({ status: "done", answerText: "旧 run 已完成" });
+    const get = async () => {
+      await Promise.all(pending);
+      const response = await app.request("/v1/events", { headers: { Cookie: `sid=${token}` } });
+      expect(response.status).toBe(200);
+      return await response.json() as { items: { kind: string; message: string; ref: Record<string, string> }[] };
+    };
+    await expect.poll(async () => (await get()).items, { timeout: 10_000 }).toContainEqual(expect.objectContaining({
+      kind: "pi.task_blocked", message: "migration_failed", ref: expect.objectContaining({ task_id: fixture.taskId, report_kind: "migration_failed" }),
+    }));
+    const final = await get();
+    expect(final.items.some((e) => e.message === "restart_limit")).toBe(restartLimit);
+    expect(JSON.stringify(final)).not.toContain(UPGRADE_SECRET);
+    expect(faux.state.callCount).toBe(1);
   } finally {
-    rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    try {
+      await closeCandidate?.();
+    } finally {
+      rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
   }
 }, 60_000);
