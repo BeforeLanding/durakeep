@@ -178,8 +178,7 @@ Scheduler：定时器指向 min(next_fire_at)，最长 60 s 兜底检查一次
     INSERT app_occurrences(schedule_id, revision, fire_at) ON CONFLICT DO NOTHING
     INSERT app_notifications(dedupe_key = occ:<id>) ON CONFLICT DO NOTHING
     UPDATE app_schedules SET status=fired
-  然后：RuntimePort.writeEvent(conv, {kind:"app.reminder_fired", data}, requestId="occ:"+id)（尽力而为）
-  SSE 推送通知
+  提交后通过 SSE 推送站内通知
 ```
 
 修改或取消提醒，就是在一个事务里更新 `revision` 和 `next_fire_at`。到期判断按当前的 revision 进行，旧的 revision 自然失效。
@@ -191,7 +190,6 @@ Scheduler：定时器指向 min(next_fire_at)，最长 60 s 兜底检查一次
 | `app_ingress_events` | `status=accepted` | 用原 requestId 重新提交 |
 | `app_jobs` | `status=running` | 改回 `queued`（单进程，不需要租约） |
 | `app_schedules` | `status=active AND next_fire_at <= now` | 投递开启时由 Scheduler 补发并标记迟到，暂停时保留待触发状态 |
-| `app_outbox` | `status=dispatching` | 站内通知：依据唯一键直接判定成功；外部渠道（P3）：改为 `unknown`，等待核对 |
 | Pi | 未完成的 run 和工具 | `harness.resume()` 处理 |
 
 ## 6. 错误处理与状态映射

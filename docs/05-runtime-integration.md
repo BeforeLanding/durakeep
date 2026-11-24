@@ -193,7 +193,7 @@ await conversation.submit({
 }, ctx);
 ```
 
-界面只渲染 `app.user` 条目的 `data.text`。提醒触发时写入的是 `{ type: "write", entry: { kind: "app.reminder_fired", data } }`，带 `requestId: "occ:<id>"`（**已验证 T-03（K6）**：write 与 input 一样按 requestId 去重——同 id 再次提交返回同一个 submission，内容不同时以第一次为准；会话忙时、进程重启后重投都成立。因此不需要先查 transcript）。
+界面显示 `app.user` 条目的 `data.text` 作为用户消息。提醒触发由业务调度器写入触发记录与站内通知，再通过 Web 事件流推送。Pi 的 `write` 可通过 requestId 去重（T-03，K6）。
 
 ## 7. RuntimePort
 
@@ -235,7 +235,7 @@ export type ConversationSnapshot = {
 };
 ```
 
-`AppEntry` 的转换规则：`app.user` → user；`pi.assistant` → assistant（解析 `<citations>`，解析结果随条目带出，由 knowledge 的 CitationValidator 在展示时校验；runtime-pi 的 observe 转换为异步并串行发出，以便标注哪些引用来自本次 run）；`pi.tool-result` → tool（只保留名称、成败和摘要）；`app.reminder_fired` → event；`pi.compaction` → 一条“较早的对话已压缩”的分隔线；`pi.system` 不展示。
+`AppEntry` 将 `app.user` 和 `pi.user` 转为用户消息，`pi.assistant` 转为带解析引用的回答，`pi.tool-result` 转为含名称和成败的工具记录。引用由 knowledge 的 CitationValidator 校验，runtime-pi 串行转换观察事件以识别本次 run 的引用。其他 `app.*` 条目转为事件，`pi.compaction` 显示为压缩分隔线。
 
 内部实现：`conversation.watch()` 配合 `ConversationTranscript.merge()`；`observe` 的 `from` 对应 `transcript.resume`。**1.5.0 实测**：`Submission.wait()` 返回的 `answer` 是助手条目的 **ID**（数字），取回答文本要再用 `conversation.entries({ minEntryId, maxEntryId })` 读出该条目；`pi.live` 里的 `tools` 是数组，部分回答在 `generation.message`，排队数量在 `pi.inbox.items`。`loadEarlier` 用 `conversation.entries({ maxEntryId: before - 1, order: "descending" })` 逐页向前扫描：条目 ID 有空洞，且 `pi.system` 等不展示，所以要扫到凑够 `limit` 条可展示条目为止。观察者的 `snapshot.entries` 是**该连接已知的全部条目**；用 `from` 重连时只含游标之后的条目。
 

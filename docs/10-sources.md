@@ -1,7 +1,7 @@
 # 10 资料来源与证据索引
 
 - 版本：v1.1，2026-11-06
-- S1–S11 来自原调研，原文和本地快照都在 `D:\Agent\pi-durable-personal-agent-research-20261106\06-sources.md` 和 `sources/`，这里只列摘要。S12 起是本版新增的内容。
+- S1–S11 来自原调研，见[调研来源索引](research/baseline-2026-11-06/06-sources.md)和[来源快照](research/baseline-2026-11-06/sources/)。S12 起为本版新增。
 
 ## 证据分级
 

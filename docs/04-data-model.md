@@ -273,7 +273,7 @@ CREATE TABLE app_jobs (
 );
 CREATE INDEX app_jobs_ready ON app_jobs(status, next_attempt_at) WHERE status = 'queued';
 
--- 外部投递（P3，MVP 只建表不使用） ------------------------------------
+-- 外部投递（可选 T-35 的预留设计，当前迁移没有此表） ---------------------
 CREATE TABLE app_outbox (
   id              TEXT PRIMARY KEY,
   owner_id        TEXT NOT NULL,
