@@ -284,6 +284,20 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       );
     `,
   },
+  {
+    id: 11,
+    sql: `
+      CREATE TABLE app_events (
+        id TEXT PRIMARY KEY,
+        level TEXT NOT NULL CHECK (level IN ('info','warn','error')),
+        kind TEXT NOT NULL,
+        ref_json TEXT NOT NULL DEFAULT '{}',
+        message TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX app_events_recent ON app_events(created_at DESC);
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

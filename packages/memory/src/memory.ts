@@ -147,9 +147,16 @@ export class MemoryService {
   }
 
   /** profile section 用：global 且 confirmed，按 key 排序（04 / 05 §4.2）。 */
-  async globalConfirmed(ownerId: string, limit = 21): Promise<MemoryRow[]> {
-    const rows = await this.#db.all<Raw>(`SELECT ${COLS} FROM app_memories WHERE owner_id = ? AND scope = 'global' AND status = 'confirmed' ORDER BY key ASC LIMIT ?`, ownerId, limit);
+  async globalConfirmed(ownerId: string, limit = 21, db: SqlExecutor = this.#db): Promise<MemoryRow[]> {
+    const rows = await db.all<Raw>(`SELECT ${COLS} FROM app_memories WHERE owner_id = ? AND scope = 'global' AND status = 'confirmed' ORDER BY key ASC LIMIT ?`, ownerId, limit);
     return rows.map(map);
+  }
+
+  async profileSnapshot(ownerId: string, limit: number): Promise<{ revision: number; rows: MemoryRow[] }> {
+    return this.#db.transaction(async (tx) => ({
+      revision: await this.setRevision(ownerId, tx),
+      rows: await this.globalConfirmed(ownerId, limit, tx),
+    }));
   }
 
   async revisions(ownerId: string, id: string): Promise<RevisionRow[]> {

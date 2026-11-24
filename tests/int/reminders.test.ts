@@ -74,7 +74,7 @@ test("恢复后暂停到期提醒，已认证的人工恢复请求立即唤醒 S
   expect((await reminders.get(ownerId, reminder.id)).status).toBe("active");
   expect(await reminders.notifications(ownerId)).toEqual([]);
   const health = () => h.app.request("/v1/admin/health", { headers: { Cookie: cookie } });
-  expect(await (await health()).json()).toEqual({ delivery_paused: true });
+  expect(await (await health()).json()).toMatchObject({ delivery_paused: true });
   expect((await h.app.request("/v1/admin/delivery/resume", { method: "POST" })).status).toBe(401);
   const resumed = await h.app.request("/v1/admin/delivery/resume", { method: "POST", headers: { Cookie: cookie, Origin: ORIGIN } });
   expect(resumed.status).toBe(200);
@@ -83,7 +83,7 @@ test("恢复后暂停到期提醒，已认证的人工恢复请求立即唤醒 S
   expect(await scheduler.tick()).toBe(0);
   expect(await reminders.notifications(ownerId)).toHaveLength(1);
   expect((await reminders.list(ownerId))[0]).toMatchObject({ id: reminder.id, status: "fired", lastOccurrence: { revision: 1 } });
-  expect(await (await health()).json()).toEqual({ delivery_paused: false });
+  expect(await (await health()).json()).toMatchObject({ delivery_paused: false });
 });
 
 // ---------------------------------------------------------------- 时间换算

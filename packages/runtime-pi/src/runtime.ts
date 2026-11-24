@@ -12,7 +12,7 @@ import {
   type UsageSummary,
 } from "@durakeep/core";
 import { backupInto as dbBackupInto } from "@durakeep/db";
-import { ConversationBusy, ConversationTranscript, type Conversation } from "@earendil-works/pi-durable";
+import { ConversationBusy, ConversationTranscript, defineDoc, type Conversation } from "@earendil-works/pi-durable";
 import { collectRunChunkIds, toAppEntry, toSnapshotLive, type PiEntryLike } from "./convert.ts";
 import { context, type PiHandle } from "./start.ts";
 
@@ -22,6 +22,15 @@ export type PiRuntimeOptions = {
 };
 
 type ModelChoice = { provider: string; modelId: string };
+const BackgroundJob = defineDoc({
+  kind: "app.background_job",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ ownerId: "", jobId: "" }),
+  checkpointWhen: () => true,
+});
 
 const WEEKDAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 
@@ -97,16 +106,24 @@ export class PiRuntime implements RuntimePort {
     return c;
   }
 
-  async createConversation(input: { kind: "chat" | "background"; instructions?: string }) {
+  async createConversation(input: Parameters<RuntimePort["createConversation"]>[0]) {
     const selection = this.#opts.model;
     const model = typeof selection === "function" ? await selection() : selection;
+    const job = input.kind === "background" ? input.job : undefined;
     const c = await this.#pi.harness.createConversation(
       {
         ownership: { kind: "ownerless" },
+        ...(job ? {
+          init: async (tx, id) => {
+            const marker = await tx.doc(BackgroundJob, id);
+            marker.ownerId = job.ownerId;
+            marker.jobId = job.id;
+          },
+        } : {}),
         agent: {
           model,
-          // pi-ai 1.5.0 的 DeepSeek flash 与 v4-pro 都显式支持 low。
-          ...(model.provider === "deepseek" ? { thinkingLevel: "low" as const } : {}),
+          // 1.5.0 会把 Pro 不支持的 low 上调到 high。Pro 显式关闭思考。
+          ...(model.provider === "deepseek" ? { thinkingLevel: model.modelId === "deepseek-flash" ? "low" as const : "off" as const } : {}),
           maxTurns: input.kind === "background" ? 1 : (this.#opts.maxTurns ?? 8),
           // 后台会话不带任何扩展和工具（05 §8）：没有 AppCore 的系统提示，也不可能调用工具
           ...(input.kind === "background" ? { extensions: [], tools: [] } : {}),
@@ -116,6 +133,26 @@ export class PiRuntime implements RuntimePort {
       context,
     );
     return { piConversationId: String(c.id) };
+  }
+
+  async orphanedBackgroundCount(ownerId: string, linkedIds: ReadonlySet<string>): Promise<number> {
+    const harness = this.#pi.harness;
+    const ids = await harness.commit(async (tx) => {
+      const ids: Awaited<ReturnType<typeof tx.scanConversations>>["items"][number]["id"][] = [];
+      let cursor: Awaited<ReturnType<typeof tx.scanConversations>>["next"];
+      do {
+        const page = await tx.scanConversations({}, 100, cursor);
+        for (const row of page.items) if (!linkedIds.has(String(row.id))) ids.push(row.id);
+        cursor = page.next;
+      } while (cursor !== undefined);
+      return ids;
+    }, context);
+    let count = 0;
+    for (const id of ids) {
+      const marker = await harness.snapshot(BackgroundJob, id, context);
+      if (marker?.ownerId === ownerId && marker.jobId) count++;
+    }
+    return count;
   }
 
   async submitInput(

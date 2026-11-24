@@ -21,7 +21,7 @@
 | 检索评测 | 脚本 | 07 §7.1 | `pnpm eval:retrieval` |
 | 回答评测 | 脚本 + 真实模型 | 07 §7.2 | `pnpm eval:answer`，**需要批准** |
 | 冒烟 | Playwright（P3） | 登录 → 收藏 → 提问 → 看到引用 → 创建提醒 | `pnpm test:e2e`，使用演示模式 |
-| 升级 | 脚本 | 用新依赖打开旧数据 | `pnpm test:upgrade`（P3） |
+| 升级 | faux 子进程和集成测试 | 用当前候选依赖打开旧应用 schema、旧任务定义的数据副本 | `pnpm test:upgrade` |
 
 CI：GitHub Actions，`ubuntu-latest` 和 `windows-latest` × Node `22.19.0` 和 `24.x`。CI 环境不配置任何 API key。
 
@@ -69,7 +69,7 @@ export function fault(point: FaultPoint): void {
 | R8 | 存储写入失败（用一个只读文件或者磁盘占满来模拟） | Harness 失效，进程退出，重启后已接纳的输入仍然在 | P0 |
 | R9 | 同一个 `client_request_id`，不同内容，并发提交 | 一个成功，一个返回 409 | P1 |
 | R10 | 同一个 `client_request_id` 发往不同会话 | 第二次返回 409（入口唯一约束挡住），Pi 中只有一个 submission | P1 |
-| R11 | 依赖升级后仍有未完成的 run | 恢复成功，或者在任务中心明确显示被阻塞，不会静默卡住 | P3 |
+| R11 | 复制旧应用 schema 和旧任务定义的数据库，重新打开未完成的 run 并注入不兼容任务迁移 | 可恢复的 run 完成；受阻任务通过认证事件接口进入任务中心，并显示 `migration_failed` 状态；额外验证崩溃循环 `restart_limit` | P3 |
 | R12 | 在线备份后彻底删除一份资料，写入后续变更，停服并用 CLI 恢复 | 重启后投递暂停，保留资料、记忆、提醒、会话及其关联可用；后续普通变更回滚，彻底删除按 purge-log 重放，片段及 FTS 行均清理 | P3 |
 | R13 | 采集作业在 `job.after_fetch` 或 `job.mid_index` 崩溃 | 重试从 checkpoint 继续；不会出现重复的版本或片段；FTS 与片段表一致（04 §5 不变式 2） | P1 |
 | R14 | 后台会话在 `background.after_answer` 崩溃 | 恢复后 faux 的 `callCount` 不增加，结果写回 | P2 |

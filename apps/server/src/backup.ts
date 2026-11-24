@@ -115,7 +115,18 @@ export class BackupService {
     return result;
   }
 
-  #pairs(): { file: string; manifest: string; jobId: string | null }[] {
+  latestAt(): number | null {
+    try {
+      return this.#pairs()[0]?.capturedAt ?? null;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return null;
+      throw error;
+    }
+  }
+
+  #pairs(): { file: string; manifest: string; jobId: string | null; capturedAt: number }[] {
+    if (!existsSync(this.#dir)) return [];
     const files = readdirSync(this.#dir, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name).sort().reverse();
     const names = new Set(files);
     return files.flatMap((name) => {
@@ -123,7 +134,8 @@ export class BackupService {
       if (!stamp || !names.has(manifestName(stamp))) return [];
       const manifest = join(this.#dir, manifestName(stamp));
       try {
-        return [{ file: join(this.#dir, name), manifest, jobId: readBackupManifest(manifest).job_id }];
+        const data = readBackupManifest(manifest);
+        return [{ file: join(this.#dir, name), manifest, jobId: data.job_id, capturedAt: data.captured_at }];
       } catch {
         return [];
       }

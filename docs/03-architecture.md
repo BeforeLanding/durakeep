@@ -85,7 +85,7 @@ main()
  8. runtime.resume()                       ← 恢复上一个进程未完成的 run
  9. JobWorker / Scheduler / Outbox 启动
 10. HTTP 开始监听 127.0.0.1:${PORT}
- harness.closed 返回 failed 时：停止接纳 → 停止 worker → 记录事件 → 退出进程，由进程管理器拉起
+ harness.closed 返回 failed 时：标记不可用 → 暂存失败状态 → 退出进程，由进程管理器拉起
 ```
 
 关闭顺序（收到 SIGINT/SIGTERM）：HTTP 停止接纳 → worker 停止领取新作业 → `harness.close()`（等待正在执行的任务代码返回）→ `db.close()` → 释放锁。
@@ -235,12 +235,10 @@ Scheduler：定时器指向 min(next_fire_at)，最长 60 s 兜底检查一次
 
 ## 9. 可观测性
 
-- 日志：JSON lines，写到 `data/logs/`，按天轮转，字段包括 `ts`、`level`、`event`、`ids`（conversation、submission、job、op_key）。**不记录正文。**
-- `app_events` 表：Pi 报告、作业失败、恢复扫描结果、备份结果，健康页从这里读取。
-- 用量：`harness.usage()` 加上后台会话的用量，按月汇总后写入 `app_usage_monthly`。
+- 日志为 JSON lines，写到标准输出，由进程管理器收集和轮转。字段包括时间、事件级别、ID 与状态。
+- `app_events` 保存 Pi 报告、作业失败、恢复扫描和备份结果。查询按 `ref_json.owner_id` 过滤。若 SQLite 已失效，宿主将最小存储失败记录暂存为独立文件，重启后补写。
+- `harness.usage()` 已包含后台会话与压缩用量，其增量按 UTC 月份记入 `app_usage_monthly`。
 
 ## 10. 升级
 
-1. 在副本数据上运行 `pnpm test:upgrade`：用新依赖打开旧数据，恢复有代表性的 run。
-2. 停止服务 → 备份 → 升级依赖 → 启动 → 执行恢复扫描 → 核对健康页。
-3. Pi 跨 minor 版本升级时，存储格式可能无法回滚：回退意味着恢复备份，会丢失备份之后的数据。升级手册要写明这一点。
+停服并备份，然后在候选 checkout 用 `pnpm test:upgrade` 验证旧数据副本及任务迁移，再升级运行环境。启动后核对恢复扫描、健康页和任务中心。跨 minor 版本回退需要恢复升级前快照，备份后的普通变更可能丢失。操作步骤见[运维与升级手册](runbook.md)。

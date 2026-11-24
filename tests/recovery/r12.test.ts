@@ -130,7 +130,7 @@ test(`R12 × ${REPEAT}：在线备份 → 彻底删除及后续写入 → 离线
       server = await startServer(dir, port);
       const readyMs = Date.now() - restoreStarted;
       cookie = await loginCookie(base);
-      expect(await body(get(base, "/v1/admin/health", cookie))).toEqual({ delivery_paused: true });
+      expect(await body(get(base, "/v1/admin/health", cookie))).toMatchObject({ delivery_paused: true });
       const exportedDir = join(dir, "exports");
       expect(await body(get(base, "/v1/memories", cookie))).toMatchObject({
         items: [{ id: memoryId, source: { conversation_id: conversationId, version_id: keptVersion } }],

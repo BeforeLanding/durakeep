@@ -11,6 +11,7 @@ import { AuthService, type Owner } from "./auth.ts";
 import { backupStamp, BackupService } from "./backup.ts";
 import { buildExport } from "./export.ts";
 import { restoreBackup } from "./restore.ts";
+import { EventStore } from "./events.ts";
 
 // 非 TTY（管道、测试）：一次性读完 stdin，按行依次交付；TTY：readline，口令不回显。
 let piped: string[] | undefined;
@@ -100,7 +101,17 @@ try {
   } else if (cmd === "backup") {
     const file = await withLock(() => withDatabase(async (db) => {
       await replayPurges(db);
-      return new BackupService(db, systemClock, dataDir, (path) => backupInto(db, path)).create();
+      const owner = await db.get<{ id: string }>("SELECT id FROM app_owners LIMIT 1");
+      const events = new EventStore(db, systemClock);
+      const service = new BackupService(db, systemClock, dataDir, (path) => backupInto(db, path));
+      try {
+        const file = await service.create();
+        if (owner) await events.record(owner.id, "backup.done", "info", {}, "succeeded").catch(() => {});
+        return file;
+      } catch (error) {
+        if (owner) await events.record(owner.id, "backup.failed", "error", {}, "failed").catch(() => {});
+        throw error;
+      }
     }));
     console.log(file);
   } else if (cmd === "restore" && arg) {

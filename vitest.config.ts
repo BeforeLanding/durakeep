@@ -8,6 +8,7 @@ export default defineConfig({
     projects: [
       { test: { name: "unit", include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"], setupFiles } },
       { test: { name: "int", include: ["tests/int/**/*.test.ts"], setupFiles, testTimeout: 60_000 } },
+      { test: { name: "upgrade", include: ["tests/upgrade/**/*.test.ts"], setupFiles, testTimeout: 60_000 } },
       {
         test: {
           name: "recovery",

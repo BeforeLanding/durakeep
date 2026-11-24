@@ -13,6 +13,7 @@ import { ReminderService, Scheduler } from "../../packages/reminders/src/index.t
 import { openAppDatabase, PiRuntime, startPi, type PiHandle } from "../../packages/runtime-pi/src/index.ts";
 import { fauxAssistantMessage, fauxProvider } from "../../packages/runtime-pi/src/testing/faux.ts";
 import { createApp, type LogEvent } from "../../apps/server/src/app.ts";
+import { EventStore } from "../../apps/server/src/events.ts";
 
 const ORIGIN = "http://127.0.0.1:4777";
 const PASSWORD = "correct horse battery";
@@ -142,10 +143,12 @@ test("S11：日志和导出包里检索不到消息正文、口令、口令哈�
   await worker.idle();
   const hash = (await db.get<{ password_hash: string }>("SELECT password_hash FROM app_auth WHERE owner_id = ?", ownerId))!.password_hash;
   expect(hash.length).toBeGreaterThan(20);
+  const eventMarker = "operations-event-fixture-only";
+  await new EventStore(db, systemClock).record(ownerId, "job.failed", "error", { job_id: eventMarker }, "failed");
   const zip = Buffer.from(await (await call("GET", "/v1/export")).arrayBuffer());
   const logText = JSON.stringify(logs);
   expect(logs.length).toBeGreaterThan(0);
-  for (const secret of [MESSAGE, PASSWORD, "wrong password", hash, API_KEY, "sid="]) {
+  for (const secret of [MESSAGE, PASSWORD, "wrong password", hash, API_KEY, "sid=", eventMarker]) {
     expect(logText.includes(secret), `日志含 ${secret.slice(0, 8)}…`).toBe(false);
     expect(zip.includes(Buffer.from(secret)), `导出包含 ${secret.slice(0, 8)}…`).toBe(false);
   }

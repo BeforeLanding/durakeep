@@ -1,7 +1,8 @@
 import { AppError, type Clock, type ErrorCode } from "@durakeep/core";
 import type { ConversationService, IngressService } from "@durakeep/conversations";
 import type { AppEntry, ConversationSnapshot, RuntimePort } from "@durakeep/core";
-import { deliveryPaused, setDeliveryPaused, type SqlDatabase } from "@durakeep/db";
+import { setDeliveryPaused, type SqlDatabase } from "@durakeep/db";
+import { readFile } from "node:fs/promises";
 import type { CitationValidator, KnowledgeService } from "@durakeep/knowledge";
 import type { MemoryService } from "@durakeep/memory";
 import type { ReminderService } from "@durakeep/reminders";
@@ -12,7 +13,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { AuthService, SESSION_TTL_MS, type Owner } from "./auth.ts";
 import type { BackupService } from "./backup.ts";
 import { EventHub } from "./hub.ts";
-import { readJson } from "./http.ts";
+import { parseLimit, readJson } from "./http.ts";
 import { presentEntry, presentSnapshot, type CitationMap } from "./present.ts";
 import { mountMemoryRoutes } from "./routes-memory.ts";
 import { mountReminderRoutes } from "./routes-reminders.ts";
@@ -22,6 +23,8 @@ import { staticFiles } from "./static.ts";
 import { latestThrottle } from "./throttle.ts";
 import { readSettings, updateSettings, type ChatModel } from "./settings.ts";
 import { BUDGET_WARNING, type UsageMeter } from "./usage.ts";
+import { EventStore } from "./events.ts";
+import { adminHealth } from "./health.ts";
 
 // 06 §1 的错误码 → HTTP 状态
 const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 429 | 500 | 502 | 503 | 504> = {
@@ -75,6 +78,9 @@ export type AppDeps = {
   backup?: BackupService;
   usage?: UsageMeter;
   chatModel?: ChatModel;
+  events?: EventStore;
+  orphanedBackgroundConversations?: number;
+  runbookPath?: string;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
   sse?: { throttleMs?: number; keepAliveMs?: number };
   /** 覆盖默认限流（每分钟次数），测试用。 */
@@ -201,7 +207,21 @@ export function createApp(deps: AppDeps) {
   const usage = deps.usage;
   if (usage) app.get("/v1/usage", async (c) => c.json(await usage.get(c.get("owner").id, c.req.query("month"))));
 
-  app.get("/v1/admin/health", async (c) => c.json({ delivery_paused: await deliveryPaused(deps.db) }));
+  const events = deps.events ?? new EventStore(deps.db, deps.clock);
+  app.get("/v1/events", async (c) => c.json(await events.list(c.get("owner").id, {
+    level: c.req.query("level"), cursor: c.req.query("cursor"), limit: parseLimit(c.req.query("limit")) ?? 20,
+  })));
+  app.get("/v1/admin/health", async (c) => c.json(await adminHealth(
+    deps.db, events, c.get("owner").id, deps.backup?.latestAt() ?? null, deps.orphanedBackgroundConversations ?? 0,
+  )));
+  const runbookPath = deps.runbookPath;
+  if (runbookPath) app.get("/v1/admin/runbook", async (c) => {
+    const body = await readFile(runbookPath, "utf8").catch((e: NodeJS.ErrnoException) => {
+      if (e.code === "ENOENT") throw new AppError("not_found", "升级手册位于仓库的 docs/runbook.md");
+      throw e;
+    });
+    return c.text(body, 200, { "X-Content-Type-Options": "nosniff" });
+  });
 
   app.post("/v1/admin/delivery/resume", async (c) => {
     await setDeliveryPaused(deps.db, false, deps.clock.now());

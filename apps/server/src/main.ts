@@ -7,7 +7,7 @@ import { BackgroundModel, JobWorker } from "@durakeep/jobs";
 import { ExtractionService, MemoryService } from "@durakeep/memory";
 import { ReminderService, Scheduler } from "@durakeep/reminders";
 import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, readPurgeLog, replayPurgeLog, type FetchPolicy } from "@durakeep/knowledge";
-import { appCompaction, appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, startPi } from "@durakeep/runtime-pi";
+import { appCompaction, appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, presentPiReport, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { AuthService } from "./auth.ts";
@@ -19,6 +19,7 @@ import { EventHub } from "./hub.ts";
 import { listen } from "./listen.ts";
 import { isChatModel, readChatModel } from "./settings.ts";
 import { UsageMeter } from "./usage.ts";
+import { EventStore } from "./events.ts";
 
 const mode = readAppMode();
 // demo：临时数据目录（除非显式指定），固定口令 demo
@@ -53,6 +54,11 @@ const hub = new EventHub();
 let healthy = true;
 let closing = false;
 const ownerId = (await db.get<{ id: string }>("SELECT id FROM app_owners LIMIT 1"))?.id;
+const events = new EventStore(db, systemClock);
+const storageFailurePath = resolve(dataDir, "storage-failures.jsonl");
+if (ownerId) await events.importStorageFailures(storageFailurePath, ownerId);
+const pendingReports = new Set<Promise<void>>();
+const eventFailure = () => log({ level: "warn", event: "event.write_failed" });
 
 // 采集（T-13）：blob 目录、知识服务、作业队列。抓取策略默认严格；
 // 只有 APP_MODE=test 且显式设置 FETCH_ALLOW_LOOPBACK=1 时才放开 127.0.0.1（进程级测试要抓取本机的测试站点）。
@@ -87,6 +93,12 @@ const worker = new JobWorker(db, systemClock, { ...knowledge.handlers(), ...extr
   },
   log,
   onFinished: async (job) => {
+    const refs = { job_id: job.id, job_kind: job.kind };
+    if (job.status === "failed") await events.record(job.ownerId, "job.failed", "error", refs, "failed").catch(eventFailure);
+    if (job.kind === "backup") {
+      const succeeded = job.status === "succeeded";
+      await events.record(job.ownerId, succeeded ? "backup.done" : "backup.failed", succeeded ? "info" : "error", refs, job.status).catch(eventFailure);
+    }
     await knowledge.onJobFinished(job).catch((e: Error) => log({ level: "error", event: "knowledge.on_job_finished", error: e.name }));
     hub.publish({
       ownerId: job.ownerId,
@@ -123,13 +135,34 @@ const pi = await startPi({
   db: raw,
   settings: { compaction: appCompaction },
   ...(useFaux ? { faux: mode === "demo" ? demoScriptedFaux() : demoFaux() } : {}),
-  extensions: [appCoreExtension({ memory: true, reminders: true }), appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }), appMemoryExtension({ db, conversations: directory, memory }), appProfileExtension({ conversations: directory, memory }), appRemindersExtension({ db, conversations: directory, reminders }), appGuardExtension({ conversations: directory })],
-  onReport: (r) => log({ level: r.kind === "storage_failed" ? "error" : "warn", event: "pi.report", kind: r.kind }),
-  onFatal: (error) => {
+  extensions: [
+    appCoreExtension({ memory: true, reminders: true }),
+    appKnowledgeExtension({ db, conversations: directory, knowledge, retrieval }),
+    appMemoryExtension({ db, conversations: directory, memory }),
+    appProfileExtension({ conversations: directory, memory, onTruncated: (id, revision) => events.profileTruncated(id, revision).catch(eventFailure) }),
+    appRemindersExtension({ db, conversations: directory, reminders }),
+    appGuardExtension({ conversations: directory }),
+  ],
+  onReport: (report) => {
+    const safe = presentPiReport(report);
+    log({ level: safe.report_kind === "storage_failed" ? "error" : "warn", event: "pi.report", ...safe });
+    if (ownerId && safe.report_kind !== "storage_failed") {
+      const pending = events.recordPi(ownerId, safe).catch(eventFailure).finally(() => pendingReports.delete(pending));
+      pendingReports.add(pending);
+    }
+  },
+  onFatal: () => {
     // 03 §6：Harness 失效 → 停止接纳 → 记录 → 退出，由进程管理器拉起；重启后恢复
     healthy = false;
     hub.publish({ ownerId: "*", event: "runtime", data: { status: "failed" } });
-    log({ level: "error", event: "pi.fatal", error: (error as Error).name });
+    if (ownerId) {
+      try {
+        events.spoolStorageFailure(storageFailurePath, ownerId);
+      } catch {
+        eventFailure();
+      }
+    }
+    log({ level: "error", event: "pi.fatal", status: "storage_failed" });
     process.exit(3);
   },
 });
@@ -141,9 +174,21 @@ if (ownerId) await usage.sync(ownerId, true);
 
 const conversations = new ConversationService(db, runtime, systemClock);
 const ingress = new IngressService(db, runtime, systemClock, conversations, log);
-await ingress.recover(); // 先重新派发已接纳未派发的输入
+let orphanedBackgroundConversations = 0;
+if (ownerId) {
+  const linked = await db.all<{ pi_conversation_id: string }>(
+    "SELECT pi_conversation_id FROM app_jobs WHERE owner_id = ? AND pi_conversation_id IS NOT NULL",
+    ownerId,
+  );
+  orphanedBackgroundConversations = await runtime.orphanedBackgroundCount(ownerId, new Set(linked.map((row) => row.pi_conversation_id)));
+}
+const ingressRecovery = await ingress.recover(); // 先重新派发已接纳未派发的输入
 runtime.resume(); // 再继续 Pi 里未完成的 run
-await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
+const jobsRequeued = await worker.recover(); // 上个进程遗留的 running → queued（03 §5.5）
+if (ownerId) await events.record(ownerId, "recovery.scan", ingressRecovery.failed ? "warn" : "info", {
+  ingress_redispatched: ingressRecovery.redispatched, ingress_failed: ingressRecovery.failed, jobs_requeued: jobsRequeued,
+  orphaned_background_conversations: orphanedBackgroundConversations,
+}, ingressRecovery.failed ? "partial" : "done").catch(eventFailure);
 worker.start(); // 后台作业要用运行时，所以在它就绪之后才开始领取
 const stopUsage = ownerId ? usage.start(ownerId, onUsageError) : undefined;
 
@@ -162,6 +207,9 @@ const { app } = createApp({
   backup,
   usage,
   chatModel,
+  events,
+  orphanedBackgroundConversations,
+  runbookPath: resolve(import.meta.dirname, "../../../docs/runbook.md"),
   hub,
   ...(existsSync(webDist) ? { staticDir: webDist } : {}),
   log,
@@ -176,6 +224,7 @@ if (mode === "demo") {
 scheduler.start(); // 启动时先补发已到期的提醒（FR-REM-04），再按下一次到期时间设置定时器
 const stopDailyBackup = startDailyBackup(systemClock, backup, () => worker.wake(), (error) => {
   log({ level: "error", event: "backup.schedule_failed", error: (error as Error).name });
+  if (ownerId) void events.record(ownerId, "backup.failed", "error", {}, "schedule_failed").catch(eventFailure);
 });
 const server = await listen(app.fetch, { host, port });
 log({ level: "info", event: "listening", port: server.port, mode });
@@ -191,6 +240,7 @@ async function shutdown(signal: string) {
   await scheduler.stop();
   await worker.stop(); // 等待执行中的作业结束
   if (ownerId) await usage.sync(ownerId).catch(onUsageError);
+  await Promise.all(pendingReports);
   await runtime.close(); // 等待任务代码返回，并关闭共享连接
   lock.release();
   process.exit(0);

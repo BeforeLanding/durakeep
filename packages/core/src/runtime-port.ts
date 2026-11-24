@@ -68,7 +68,10 @@ export interface RuntimePort {
   createConversation(input: {
     kind: "chat" | "background";
     instructions?: string;
+    job?: { ownerId: string; id: string };
   }): Promise<{ piConversationId: string }>;
+  /** 启动恢复扫描时统计带应用标记但未被作业引用的后台会话。 */
+  orphanedBackgroundCount(ownerId: string, linkedIds: ReadonlySet<string>): Promise<number>;
   submitInput(
     conv: string,
     input: { text: string; requestId: string; steer: boolean; now: number; tz: string },

@@ -22,4 +22,4 @@ export function useGlobalStream(onEvent: (event: string, data: unknown) => void)
   }, []);
 }
 
-export const fmtTime = (ms: number) => new Date(ms).toLocaleString("zh-CN", { hour12: false });
+export const fmtTime = (ms: number, timezone?: string) => new Date(ms).toLocaleString("zh-CN", { hour12: false, timeZone: timezone });

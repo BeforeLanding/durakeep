@@ -47,3 +47,24 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .badge { background: var(--bad); color: #fff; font-size: 11px; border-radius: 9px; padding: 0 6px; margin-left: 4px; }
 .mem { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .col-list li { display: block; }
+.nav { flex-wrap: wrap; }
+.ops-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.ops-header h2 { margin: 0 0 12px; }
+.ops-section { border-top: 1px solid var(--line); padding: 12px 0 18px; }
+.ops-section h3 { margin: 0 0 12px; }
+.ops-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); margin: 0 0 12px; gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.ops-metrics > div { background: var(--card); padding: 9px 12px; }
+.ops-metrics dt { color: var(--muted); font-size: 13px; }
+.ops-metrics dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ops-reports { margin: 10px 0 16px; }
+.ops-reports summary { cursor: pointer; }
+.ops-pause { flex-wrap: wrap; justify-content: space-between; margin-bottom: 16px; }
+.ops-actions { gap: 16px; }
+.ops-budget { font-variant-numeric: tabular-nums; }
+.ops-budget strong { font-size: 23px; }
+.ops progress { width: 100%; accent-color: var(--acc); }
+.ops-table { overflow-x: auto; }
+.ops-table th { text-align: left; padding: 5px 6px; font-size: 13px; color: var(--muted); }
+.ops-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.ops-fields label { display: grid; gap: 5px; }
+.ops-fields input, .ops-fields select { width: 100%; }

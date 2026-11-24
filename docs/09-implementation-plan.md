@@ -132,7 +132,7 @@
 - DoD：FR-OPS-03 的测试通过；记录大的 `reserveTokens` 是否影响输出上限。
 
 **T-32 · 健康页与升级手册**（0.5）· G2
-- 产出：`/v1/admin/health` 与页面；`docs/runbook.md`（启动、停止、备份、恢复、升级、故障排查）。
+- 产出：健康页、设置、任务中心运维事件、孤儿后台会话统计、`pnpm test:upgrade`（R11）与[运维手册](runbook.md)。
 
 **T-33 · 演示模式**（0.75）· G2
 - 产出：`pnpm demo`；样例资料（自己撰写或使用 CC 许可的文本）；faux 回复脚本。

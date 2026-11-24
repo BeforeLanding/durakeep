@@ -66,7 +66,7 @@ export async function startPi(deps: PiDeps): Promise<PiRuntime> {
 | `progress` | 默认（100 ms / 1,000 ms） | — |
 | `followUpMode`、`steeringMode` | 默认（每轮放一条） | — |
 
-dev/prod 创建会话时读取当前 `chat_model`，缺省按合法的 `CHAT_MODEL` 或 `deepseek-flash` 选择。锁定的 pi-ai 1.5.0 目录中，Flash 和 V4 Pro 的 `thinkingLevelMap.low` 均为 `"low"`，新建 DeepSeek 会话使用此级别。交互会话最多 8 轮，后台会话最多 1 轮。test/demo 进程固定使用 `faux/faux-1`。
+dev/prod 创建会话时读取当前 `chat_model`，缺省按合法的 `CHAT_MODEL` 或 `deepseek-flash` 选择。锁定的 pi-ai 1.5.0 目录中，Flash 的 `thinkingLevelMap.low` 是 `"low"`，V4 Pro 的值是 `null`。OpenAI Completions 适配器会调用 `clampThinkingLevel` 将不受支持的 `low` 上调到下一个支持级别（V4 Pro 为 `high`）。新建 Flash 会话使用 `low`，V4 Pro 使用 `off`，适配器为后者构造 `thinking: { type: "disabled" }`。此配置只在新建会话时应用。交互会话最多 8 轮，后台会话最多 1 轮。test/demo 固定使用 `faux/faux-1`。
 
 **T-31 实测（faux）。** 1M 上下文中验证了 48k 至 64k 之间触发后台压缩、超过 64k 触发阻塞压缩。普通回答请求的 `maxTokens` 缺省为 `undefined`，由 provider 决定上限。测试通过内部选项注入 20,000 时，该值原样透传，`reserveTokens` 不参与计算。1.5.0 的公开 `ConversationStreamOptions` 未声明此选项。摘要请求采用 `min(floor(0.8 × reserveTokens), model.maxTokens)`。模型上限为 384,000 时，`reserveTokens=936,000` 观察到摘要请求上限 384,000。对照 `reserveTokens=4,000` 时为 3,200。摘要按实际用量入账，测试中两个回答各使用 1 个输出 token，摘要使用 20 个，累计为 22 个。
 
@@ -103,7 +103,7 @@ dev/prod 创建会话时读取当前 `chat_model`，缺省按合法的 `CHAT_MOD
 </profile>
 ```
 
-- 只包括 `scope=global`、`status=confirmed` 的记忆，按 key 排序，最多 20 条，超出部分截断并写入 `app_events`。
+- 只包括 `scope=global`、`status=confirmed` 的记忆，按 key 排序，最多 20 条。超过时写入 `profile.truncated`，按 owner 和 `memory_set_revision` 持久去重。
 - 按 `memory_set_revision` 做缓存：版本号不变时返回同一个字符串。没有记忆时返回 `undefined`，即省略这个 section。
 - **已验证 T-03（K5）**：`render(input, context)` 可以是异步函数，闭包里可以读取宿主数据库（与 Pi 共用连接队列）。每次请求都会重新执行 render（实测 10 次请求渲染 10 次），所以必须按 `memory_set_revision` 缓存，避免每次请求都查库；文本不变时不会追加 `pi.system`（10 次请求后只有 1 条），记忆变化后恰好追加 1 条。因此不需要 `configure({ instructions })` 的备选方案（它仍可作为后备）。
 
@@ -202,7 +202,8 @@ await conversation.submit({
 ```ts
 export interface RuntimePort {
   resume(): void;                                                      // 启动调度；在恢复扫描之后调用（03 §3）
-  createConversation(input: { kind: "chat" | "background"; instructions?: string }): Promise<{ piConversationId: string }>;
+  createConversation(input: { kind: "chat" | "background"; instructions?: string; job?: { ownerId: string; id: string } }): Promise<{ piConversationId: string }>;
+  orphanedBackgroundCount(ownerId: string, linkedIds: ReadonlySet<string>): Promise<number>;
   submitInput(conv: string, input: {
     text: string; requestId: string; steer: boolean; now: number; tz: string;
   }): Promise<{ submissionId: string }>;
@@ -255,7 +256,9 @@ export type ConversationSnapshot = {
 | `storage_failed` | `pi.storage_failed` | error | 健康页显示红色，进程随后重启 |
 | `task_faulted` / `task_interrupted` | `pi.task_faulted` | warn | 任务中心 |
 | `migration_failed` / `task_outdated` | `pi.task_blocked` | error | 任务中心，并提示查看升级手册 |
-| `extension_error` / `task_error` / `host_error` / `listener_error` | `pi.extension_error` | warn | 只在健康页显示计数 |
+| `extension_error` / `task_error` / `host_error` / `listener_error` | `pi.extension_error` | warn | 健康页计数及任务中心 |
+
+报告跨运行时边界时仅保留报告种类、任务或会话 ID，以及有限集合内的状态（如 `restart_limit`）。存储失败后，宿主把最小记录暂存到 `storage-failures.jsonl`，下次启动导入。
 
 `runFailure.reason` 对应的中文提示：`model_error` →“模型服务出错：{detail}”；`turn_limit` →“工具调用轮数到达上限（8 轮）”；`restart_limit` / `interrupted` →“服务多次中断，已停止这次回答”；`aborted` →“已停止”；`nothing_to_answer` →“没有需要继续的内容”；`no_model` →“没有配置模型”。
 

@@ -289,12 +289,12 @@ CREATE TABLE app_outbox (
 );
 
 -- 运维 ---------------------------------------------------------------
-CREATE TABLE app_events (
+CREATE TABLE app_events (              -- 迁移 11
   id          TEXT PRIMARY KEY,
   level       TEXT NOT NULL CHECK (level IN ('info','warn','error')),
   kind        TEXT NOT NULL,              -- pi.task_faulted / job.failed / recovery.scan / backup.done …
-  ref_json    TEXT NOT NULL DEFAULT '{}', -- 只放 ID
-  message     TEXT NOT NULL,
+  ref_json    TEXT NOT NULL DEFAULT '{}', -- 含 owner_id；其他键为 ID 或固定状态/统计
+  message     TEXT NOT NULL,             -- 固定状态码
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX app_events_recent ON app_events(created_at DESC);

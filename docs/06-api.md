@@ -192,13 +192,18 @@ POST /v1/conversations/01J…/messages
 | GET | `/v1/jobs/:id` | 单个作业（`id`、`kind`、`status`、`attempts`、`max_attempts`、`next_attempt_at`（仅排队中）、`error_code`、`error_message`（面向用户，不含堆栈）、`document_id`） |
 | POST | `/v1/jobs/:id/retry` | 只对 `failed` 状态有效：把 attempts 清零，重新排队 |
 | POST | `/v1/jobs/:id/cancel` | 对 `queued` 和 `running` 有效 |
-| GET | `/v1/events?level=&cursor=` | `app_events` 列表 |
+| GET | `/v1/events?level=&cursor=&limit=` | 当前 owner 的运行报告与运维事件，按 `created_at`、`id` 倒序 |
 | GET | `/v1/health` | 不需要认证，只返回 `{ "ok": true }` 或 503 |
-| GET | `/v1/admin/health` | T-30 返回 `{ "delivery_paused": true }` 或 `false`；运行时长、数据库大小、作业数、未读通知数、最近一次备份及 Pi 报告计数由 T-32 补齐 |
+| GET | `/v1/admin/health` | 运行时长、数据库大小、排队和失败作业数、未读通知、最近备份、Pi 报告、投递暂停和孤儿后台会话数 |
+| GET | `/v1/admin/runbook` | 以纯文本返回运维与升级手册 |
 | GET | `/v1/usage?month=2026-11` | 按模型汇总的 token 数和估算费用，以及预算上限和使用比例 |
 | GET | `/v1/export` | 返回包含资料、记忆和提醒的 ZIP（格式见 04 §6，采用存储方式并在内存中构造） |
 | POST | `/v1/admin/backup` | 立即入队并返回 202 `{ "job_id": "…" }`，通过作业接口查结果。可带 `{ "client_request_id": "<UUID>" }`；同 ID 重试返回 200 和原作业 |
 | POST | `/v1/admin/delivery/resume` | 人工确认后恢复投递，返回 200 `{ "delivery_paused": false }` 并立即唤醒 Scheduler 补发到期提醒。重复调用仍返回相同状态 |
+
+`/v1/events` 返回 `{ items, next_cursor }`。事件含 `id, level, kind, ref, message, created_at`，其中 `ref` 是已解析的 ID 与状态对象，`message` 是状态码。可按 `info`、`warn` 或 `error` 过滤，`limit` 默认 20、最大 100；无效过滤或游标返回 400。
+
+认证健康接口返回 `uptime_ms, db_size_bytes, queued_jobs, failed_jobs, unread_notifications, last_backup_at, pi_reports, delivery_paused, orphaned_background_conversations`。数据库大小为 SQLite 逻辑页数乘页大小，不另计 WAL 文件、blob 或备份。最近备份时间来自最新有效备份对的清单，无备份时为 `null`。Pi 报告为 `{ total, by_kind }`，按原始报告种类累计。孤儿后台会话计数来自最近一次启动扫描。
 
 `GET /v1/usage` 缺省查询当前 UTC 自然月，显式的 `month` 必须为 `YYYY-MM`。响应包含 `month`、`models`（每项为 `model, input_tokens, output_tokens, cache_read_tokens, cost_usd`）、`total_cost_usd`、`monthly_budget_usd`、`usage_ratio`、`warning_80`、`exceeded_100`。使用比例为费用除以当前预算（0.8 表示 80%），历史查询也使用当前预算。
 

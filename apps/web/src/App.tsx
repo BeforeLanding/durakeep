@@ -7,6 +7,7 @@ import { Login } from "./Login.tsx";
 import { Memories } from "./Memories.tsx";
 import { Notifications } from "./Notifications.tsx";
 import { Reminders } from "./Reminders.tsx";
+import { Settings } from "./Settings.tsx";
 import { useGlobalStream, useRoute } from "./hooks.ts";
 
 type Me = { owner_id: string; display_name: string; timezone: string };
@@ -24,11 +25,11 @@ export function App() {
 
   if (me === undefined) return <div className="center muted">加载中…</div>;
   if (me === null) return <Login onDone={refresh} />;
-  return <Shell me={me} onLogout={() => setMe(null)} />;
+  return <Shell me={me} onLogout={() => setMe(null)} onTimezone={(timezone) => setMe((owner) => owner ? { ...owner, timezone } : owner)} />;
 }
 
 /** 登录之后才挂载：这里才会打开全局流（未读数、提醒到点）。 */
-function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
+function Shell({ me, onLogout, onTimezone }: { me: Me; onLogout: () => void; onTimezone: (timezone: string) => void }) {
   const route = useRoute();
   const [unread, setUnread] = useState(0);
   const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
@@ -57,6 +58,7 @@ function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
         {link("memories", "记忆")}
         {link("reminders", "提醒")}
         {link("jobs", "任务")}
+        {link("settings", "设置")}
         <span className="grow" />
         <a href="#/notifications" className={tab === "notifications" ? "on" : ""}>
           通知{unread > 0 && <span className="badge">{unread}</span>}
@@ -74,7 +76,9 @@ function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
         {tab === "docs" ? (
           <Docs docId={route[1]} />
         ) : tab === "jobs" ? (
-          <Jobs />
+          <Jobs timezone={me.timezone} />
+        ) : tab === "settings" ? (
+          <Settings timezone={me.timezone} onTimezone={onTimezone} />
         ) : tab === "memories" ? (
           <Memories />
         ) : tab === "reminders" ? (

@@ -51,7 +51,7 @@ export class BackgroundModel {
     const { ownerId, id } = ctx.job;
     const row = await this.#db.get<{ pi_conversation_id: string | null }>("SELECT pi_conversation_id FROM app_jobs WHERE owner_id = ? AND id = ?", ownerId, id);
     if (row?.pi_conversation_id) return row.pi_conversation_id;
-    const { piConversationId } = await rt.createConversation({ kind: "background", instructions });
+    const { piConversationId } = await rt.createConversation({ kind: "background", instructions, job: { ownerId, id } });
     fault("background.after_create"); // 会话已创建、ID 尚未写入作业：留下一个孤儿会话
     await this.#db.run("UPDATE app_jobs SET pi_conversation_id = ? WHERE owner_id = ? AND id = ? AND pi_conversation_id IS NULL", piConversationId, ownerId, id);
     const again = await this.#db.get<{ pi_conversation_id: string }>("SELECT pi_conversation_id FROM app_jobs WHERE owner_id = ? AND id = ?", ownerId, id);
