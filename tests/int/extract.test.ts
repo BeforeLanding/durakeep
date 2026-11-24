@@ -91,6 +91,23 @@ test("空闲 + ≥4 条新用户消息 → 候选；敏感 / 非法的被过滤�
   expect(await t.extraction.scan()).toBe(0); // 没有新活动：不会再入队
 });
 
+test("同批提取时普通工作偏好入库，体检和血压信息不入库", async () => {
+  const t = await setup();
+  const preference = "我平时主要用 TypeScript 写后端";
+  const health = "我最近体检血压有点高";
+  await t.talk(4, (i) => [preference, health, "今天先到这里", "谢谢"][i - 1]!);
+  t.faux.setResponses([fauxAssistantMessage(JSON.stringify([
+    item({ key: "work.language", value: preference }),
+    item({ kind: "profile_fact", key: "profile.recent", value: health }),
+    item({ kind: "profile_fact", key: "profile.blood_pressure", value: "A little high" }),
+  ]))]);
+
+  expect(await t.idleScan()).toBe(1);
+  const candidates = await t.cands();
+  expect.soft(candidates).toContainEqual(expect.objectContaining({ key: "work.language", value: preference, status: "candidate" }));
+  expect(candidates.filter((m) => m.key !== "work.language")).toEqual([]);
+});
+
 test("新增不足 4 条：不调用模型、游标不推进；攒够后只处理游标之后的内容", async () => {
   const t = await setup();
   await t.talk(3);
