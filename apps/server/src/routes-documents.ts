@@ -1,7 +1,7 @@
 import { AppError, type Clock } from "@durakeep/core";
 import type { SqlDatabase } from "@durakeep/db";
 import { cancelJob, getJob, listJobs, retryJob, type JobRow, type JobStatus } from "@durakeep/jobs";
-import { docxToMarkdown, extractHtml, MAX_UPLOAD_BYTES, type DocumentRow, type KnowledgeService, type VersionRow } from "@durakeep/knowledge";
+import { docxToMarkdown, extractHtml, MAX_UPLOAD_BYTES, type KnowledgeRetrieval, type DocumentRow, type KnowledgeService, type VersionRow } from "@durakeep/knowledge";
 import type { Hono } from "hono";
 import type { AppEnv } from "./app.ts";
 import { parseLimit, readJson } from "./http.ts";
@@ -73,7 +73,7 @@ export function titleFromFilename(name: string): string {
 
 export function mountDocumentRoutes(
   app: Hono<AppEnv>,
-  deps: { db: SqlDatabase; clock: Clock; limits?: Partial<Record<"capture", number>>; wake?: () => void },
+  deps: { db: SqlDatabase; clock: Clock; limits?: Partial<Record<"capture", number>>; wake?: () => void; retrieval?: KnowledgeRetrieval },
   knowledge: KnowledgeService,
   limiter: RateLimiter,
   captureLimit: number,
@@ -165,6 +165,22 @@ export function mountDocumentRoutes(
       }
     }
     return c.json({ document_id: r.documentId, job_id: r.jobId, status: r.status, deduplicated: r.deduplicated }, r.deduplicated ? 200 : 202);
+  });
+
+  app.post("/v1/documents/:id/refresh", async (c) => {
+    const owner = c.get("owner");
+    capture(owner.id);
+    const r = await knowledge.refresh(owner.id, c.req.param("id"));
+    return c.json({ job_id: r.jobId, created: r.created }, r.created ? 202 : 200);
+  });
+
+  // 06 §4：资料页全文搜索，与 kb_search 同一条检索链路
+  const retrieval = deps.retrieval;
+  if (retrieval) app.get("/v1/search", async (c) => {
+    const q = (c.req.query("q") ?? "").trim();
+    if (q === "" || Array.from(q).length > 200) throw new AppError("invalid_request", "q 需为 1–200 个字符", { issues: [{ path: "q" }] });
+    const topK = parseLimit(c.req.query("top_k"), 20) ?? 10;
+    return c.json({ items: await retrieval.searchForUi(c.get("owner").id, { query: q, topK }) });
   });
 
   app.get("/v1/documents/:id", async (c) => {

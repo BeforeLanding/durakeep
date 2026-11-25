@@ -225,6 +225,7 @@ const { app } = createApp({
   isHealthy: () => healthy,
   chat: { conversations, ingress, runtime },
   knowledge,
+  retrieval,
   memory,
   reminders,
   citations: new CitationValidator(db),

@@ -74,6 +74,27 @@ export function escapeSourceText(s: string): string {
 const escapeAttr = (s: string) => s.replace(/[\r\n]+/g, " ").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export type SourceMeta = { title: string; capturedAt: number; sourceType: string };
+export type UiSearchResult = { chunk_id: number; document_id: string; title: string; source_type: string; loc: string; snippet: string };
+
+/** 片段摘录：以查询（或其中第一个出现的词）为中心截取约 160 字；找不到就取开头。 */
+export function excerpt(text: string, query: string, width = 160): string {
+  // 摘录给人看：去掉 Markdown 标题、强调、行内代码和列表标记
+  const plain = text.replace(/^\s{0,3}#{1,6}\s+/gm, "").replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "").replace(/\*\*|__|`/g, "");
+  const flat = plain.replace(/\s+/g, " ").trim();
+  const chars = Array.from(flat);
+  if (chars.length <= width) return flat;
+  const terms = [query.trim(), ...query.split(/[\s,，。、？?！!]+/)].filter((t) => t.length > 0);
+  let at = -1;
+  for (const t of terms) {
+    const i = flat.toLowerCase().indexOf(t.toLowerCase());
+    if (i >= 0) {
+      at = Array.from(flat.slice(0, i)).length;
+      break;
+    }
+  }
+  const start = at < 0 ? 0 : Math.max(0, Math.min(at - Math.floor(width / 3), chars.length - width));
+  return (start > 0 ? "…" : "") + chars.slice(start, start + width).join("") + (start + width < chars.length ? "…" : "");
+}
 
 export function renderSource(chunkId: number, chunkIds: number[], headingPath: string, text: string, meta: SourceMeta): string {
   const date = new Date(meta.capturedAt).toISOString().slice(0, 10);
@@ -107,20 +128,45 @@ export class KnowledgeRetrieval {
     return out;
   }
 
-  /** kb_search。所有过滤（owner、active、标签）都在查询里完成；引用校验时会再校验一次（T-16）。 */
-  async search(ownerId: string, input: { query: string; topK?: number; tags?: string[] }): Promise<ToolText> {
+  /** 词法 + 子串两路召回，RRF 融合，相邻片段合并；没有可检索的关键词时返回 undefined。kb_search 与资料页搜索共用。 */
+  async #rank(ownerId: string, input: { query: string; topK?: number; tags?: string[] }): Promise<Group[] | undefined> {
     const topK = Math.min(Math.max(Math.trunc(input.topK ?? DEFAULT_TOP_K), 1), MAX_TOP_K);
     const tags = input.tags?.filter((t) => t.trim() !== "");
     const hasLex = buildMatchQuery(segment(input.query)) !== undefined;
     const hasSub = substringQuery(input.query) !== undefined;
-    if (!hasLex && !hasSub) {
-      return { text: "没有可用于检索的关键词（查询只包含停用词或标点），请换个说法。", details: { query: input.query, returned: 0, chunk_ids: [], results: [] } };
-    }
+    if (!hasLex && !hasSub) return undefined;
     const opts = { limit: ROUTE_LIMIT, tags };
     const lexical = await searchLexical(this.#db, ownerId, input.query, opts);
     const substring = await searchSubstring(this.#db, ownerId, input.query, opts);
     const fused = [...rrf([lexical, substring]).values()].sort((a, b) => b.score - a.score || a.hit.chunkId - b.hit.chunkId);
-    const groups = mergeAdjacent(fused).slice(0, topK);
+    return mergeAdjacent(fused).slice(0, topK);
+  }
+
+  /** 资料页的全文搜索：与 kb_search 同一条检索链路，返回结构化结果（标题、位置、片段摘录）。 */
+  async searchForUi(ownerId: string, input: { query: string; topK?: number; tags?: string[] }): Promise<UiSearchResult[]> {
+    const groups = await this.#rank(ownerId, input);
+    if (!groups || groups.length === 0) return [];
+    const meta = await this.#docMeta(ownerId, [...new Set(groups.map((g) => g.versionId))]);
+    return groups.map((g) => {
+      const m = meta.get(g.versionId) ?? { title: "（未知）", capturedAt: 0, sourceType: "text" };
+      const text = joinGroupText(g.hits);
+      return {
+        chunk_id: g.best.chunkId,
+        document_id: g.documentId,
+        title: m.title,
+        source_type: m.sourceType,
+        loc: g.best.headingPath,
+        snippet: excerpt(text, input.query),
+      };
+    });
+  }
+
+  /** kb_search。所有过滤（owner、active、标签）都在查询里完成；引用校验时会再校验一次（T-16）。 */
+  async search(ownerId: string, input: { query: string; topK?: number; tags?: string[] }): Promise<ToolText> {
+    const groups = await this.#rank(ownerId, input);
+    if (!groups) {
+      return { text: "没有可用于检索的关键词（查询只包含停用词或标点），请换个说法。", details: { query: input.query, returned: 0, chunk_ids: [], results: [] } };
+    }
     if (groups.length === 0) {
       return { text: "没有找到相关资料。可以换个说法，或者先收藏相关资料。", details: { query: input.query, returned: 0, chunk_ids: [], results: [] } };
     }

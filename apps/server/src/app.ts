@@ -3,7 +3,7 @@ import type { ConversationService, IngressService } from "@durakeep/conversation
 import type { AppEntry, ConversationSnapshot, RuntimePort } from "@durakeep/core";
 import { setDeliveryPaused, type SqlDatabase } from "@durakeep/db";
 import { readFile } from "node:fs/promises";
-import type { CitationValidator, KnowledgeService } from "@durakeep/knowledge";
+import type { CitationValidator, KnowledgeRetrieval, KnowledgeService } from "@durakeep/knowledge";
 import type { MemoryService } from "@durakeep/memory";
 import { changeOutbox, listOutbox } from "@durakeep/outbox";
 import type { ReminderService } from "@durakeep/reminders";
@@ -69,6 +69,8 @@ export type AppDeps = {
   hub?: EventHub;
   /** 资料与作业（T-13）；未提供时不挂载 /v1/documents、/v1/jobs。 */
   knowledge?: KnowledgeService;
+  /** 资料页全文搜索（GET /v1/search）；未提供时不挂载。 */
+  retrieval?: KnowledgeRetrieval;
   /** 引用校验（T-16）；未提供时助手条目不带引用信息。 */
   citations?: CitationValidator;
   /** 长期记忆（T-20）；未提供时不挂载 /v1/memories。 */
@@ -314,7 +316,7 @@ export function createApp(deps: AppDeps) {
 
   const hub = deps.hub ?? new EventHub();
   if (deps.chat) mountConversationRoutes(app, deps, deps.chat, limiter);
-  if (deps.knowledge) mountDocumentRoutes(app, { db: deps.db, clock: deps.clock, limits: deps.limits, wake: deps.wakeJobs }, deps.knowledge, limiter, LIMITS.capture);
+  if (deps.knowledge) mountDocumentRoutes(app, { db: deps.db, clock: deps.clock, limits: deps.limits, wake: deps.wakeJobs, ...(deps.retrieval ? { retrieval: deps.retrieval } : {}) }, deps.knowledge, limiter, LIMITS.capture);
   if (deps.memory) mountMemoryRoutes(app, { db: deps.db }, deps.memory);
   if (deps.reminders) mountReminderRoutes(app, { db: deps.db, hub }, deps.reminders);
   mountGlobalStream(app, deps, hub);

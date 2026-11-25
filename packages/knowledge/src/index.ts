@@ -23,5 +23,5 @@ export { chunkMarkdown, estimateTokens, CHUNKER_VERSION, type Chunk } from "./ch
 export { segment, segmentForIndex, buildMatchQuery, substringQuery, STOPWORDS } from "./segment.ts";
 export { createChunkIndexer, deleteVersionChunks, setActiveChunks } from "./indexer.ts";
 export { searchLexical, searchSubstring, type Hit, type SearchOptions } from "./search.ts";
-export { KnowledgeRetrieval, rrf, mergeAdjacent, joinGroupText, escapeSourceText, renderSource, MAX_OUTPUT_CHARS, DEFAULT_TOP_K, MAX_TOP_K, type ToolText } from "./retrieval.ts";
+export { KnowledgeRetrieval, excerpt, type UiSearchResult, rrf, mergeAdjacent, joinGroupText, escapeSourceText, renderSource, MAX_OUTPUT_CHARS, DEFAULT_TOP_K, MAX_TOP_K, type ToolText } from "./retrieval.ts";
 export { CitationValidator, type Citation, type InvalidReason } from "./citations.ts";

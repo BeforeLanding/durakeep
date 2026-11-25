@@ -129,7 +129,8 @@ POST /v1/conversations/01J…/messages
 | DELETE | `/v1/documents/:id` | 彻底删除，返回 202 和 `job_id`。请求返回时资料已是 `purging`、片段已不可检索；原文 / 正文 / 片段 / 索引由 `purge_document` 作业异步清除，完成后列表与详情都是 404 |
 | GET | `/v1/documents/:id/conversations` | `{ items: [{ id, title, archived, last_active_at }] }`：检索结果里出现过这份资料的会话（含已归档），用于彻底删除前归档 |
 | GET | `/v1/chunks/:id` | 引用悬停时用：返回 `{ id, document_id, version_id, title, loc, char_start, char_end, text }`；校验 owner 和 `active`，不满足一律 404 |
-| GET | `/v1/search?q=&top_k=10` | 调试和资料页搜索；与 `kb_search` 使用同一条检索链路 |
+| GET | `/v1/search?q=&top_k=10` | 资料页全文搜索；与 `kb_search` 使用同一条检索链路（只含 active 片段）。`q` 1–200 字符，`top_k` 1–20。返回 `{ items: [{ chunk_id, document_id, title, source_type, loc, snippet }] }`，`snippet` 为去掉 Markdown 标记、以查询词为中心的约 160 字摘录 |
+| POST | `/v1/documents/:id/refresh` | 重新抓取网页 / 飞书资料：202 `{ job_id, created: true }`；已有排队或执行中的抓取作业时 200 返回它。内容有变化则产生新版本（旧版本保留），未变不改动；失败的资料改回 `pending`。文本资料 409 `invalid_state`，已停用 / 删除中的资料 409；与采集共用限流 |
 
 **飞书 / Lark 文档与登录墙。** 飞书文档网页需要登录且由前端脚本渲染，直接抓取只会拿到登录页。识别为飞书链接（`*.feishu.cn`、`*.larkoffice.com`、`*.larksuite.com` 的 `/docx/`、`/docs/`、`/wiki/`）时：配置了 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（飞书自建应用，需开通 `docx:document:readonly`、`wiki:wiki:readonly`，并在文档中“添加文档应用”）则在作业里经开放平台读取文档块并转成 Markdown；未配置则 `POST /v1/documents` 直接返回 422 `login_required`，不建资料。表格、多维表格等返回 `unsupported_type`。腾讯文档、Notion、石墨、钉钉文档同样在提交时返回 `login_required`。其他网址若抓取被重定向到登录页（主机名以 accounts./passport./login./sso. 等开头，或路径含 /login、/signin 等），作业以 `login_required` 失败。应用无权读取文档时为 `permission_denied`。
 

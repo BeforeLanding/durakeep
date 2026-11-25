@@ -79,6 +79,7 @@ function List({ feishu }: { feishu: boolean }) {
   useGlobalStream((ev) => ev === "job" && load());
   const failed = useFailedJobs(tick);
   const filtering = q !== "" || status !== "";
+  const hits = useFullText(q);
   return (
     <div className="page">
       <PageHead title="资料" desc="收藏的网页、文档和笔记都会被切分索引，对话时自动检索并标注出处。" />
@@ -86,7 +87,7 @@ function List({ feishu }: { feishu: boolean }) {
       <div className="toolbar">
         <div className="search">
           <Icon name="search" />
-          <input placeholder="按标题筛选" value={q} onChange={(e) => setQ(e.target.value)} aria-label="按标题筛选" />
+          <input placeholder="搜索标题和正文" value={q} onChange={(e) => setQ(e.target.value)} aria-label="搜索资料" />
         </div>
         <div className="seg" style={{ margin: 0 }}>
           {[["", "全部"], ["ready", "可用"], ["pending", "处理中"], ["failed", "失败"], ["revoked", "已停用"]].map(([k, v]) => (
@@ -95,7 +96,19 @@ function List({ feishu }: { feishu: boolean }) {
         </div>
       </div>
       {err && <div className="notice bad"><Icon name="alert" />{err}</div>}
-      {loaded && items.length === 0 && (
+      {hits && hits.length > 0 && (
+        <section className="hits">
+          <div className="section-label">正文中的匹配 · {hits.length}</div>
+          {hits.map((h) => (
+            <a key={h.chunk_id} className="hit" href={`#/docs/${h.document_id}`}>
+              <div className="hit-title"><Icon name="file" />{h.title}{h.loc && <span className="muted small"> · {h.loc}</span>}</div>
+              <div className="hit-snippet"><Highlight text={h.snippet} query={q} /></div>
+            </a>
+          ))}
+          {items.length > 0 && <div className="section-label" style={{ marginTop: 14 }}>标题匹配 · {items.length}</div>}
+        </section>
+      )}
+      {loaded && items.length === 0 && !(hits && hits.length > 0) && (
         filtering ? <Empty icon="search" title="没有符合条件的资料" /> : (
           <Empty icon="book" title="知识库还是空的">
             <div>贴一个链接、上传一份 Word，或者在对话里说“收藏：……”。</div>
@@ -127,6 +140,37 @@ function List({ feishu }: { feishu: boolean }) {
       </ul>
     </div>
   );
+}
+
+type Hit = { chunk_id: number; document_id: string; title: string; source_type: string; loc: string; snippet: string };
+
+/** 输入 ≥2 个字符后（防抖 250 ms）调用全文搜索；与对话里的检索是同一条链路。 */
+function useFullText(q: string): Hit[] | null {
+  const [hits, setHits] = useState<Hit[] | null>(null);
+  useEffect(() => {
+    const t = q.trim();
+    if (Array.from(t).length < 2) {
+      setHits(null);
+      return;
+    }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      api<{ items: Hit[] }>("GET", `/v1/search?q=${encodeURIComponent(t)}&top_k=8`).then((r) => live && setHits(r.items), () => live && setHits(null));
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [q]);
+  return hits;
+}
+
+/** 高亮查询词（整句与按空白 / 标点拆开的词）；只生成文本节点与 <mark>。 */
+function Highlight({ text, query }: { text: string; query: string }) {
+  const terms = [...new Set([query.trim(), ...query.split(/[\s,，。、？?！!]+/)])].filter((t) => t.length > 0).sort((a, b) => b.length - a.length);
+  if (terms.length === 0) return <>{text}</>;
+  const re = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  return <>{text.split(re).map((part, i) => (i % 2 === 1 ? <mark key={i}>{part}</mark> : part))}</>;
 }
 
 function Capture({ onDone, feishu }: { onDone: () => void; feishu: boolean }) {
@@ -320,6 +364,10 @@ function Detail({ id }: { id: string }) {
   const archive = (convId: string) => api("PATCH", `/v1/conversations/${convId}`, { archived: true }).then(load, fail);
   const act = (what: "revoke" | "restore") => api("POST", `/v1/documents/${id}/${what}`).then(() => { toast(what === "revoke" ? "已停止使用：对话中不会再检索到它" : "已恢复使用"); load(); }, fail);
   const retry = () => job && api("POST", `/v1/jobs/${job.id}/retry`).then(() => { toast("已重新排队"); load(); }, fail);
+  const refresh = () => api<{ created: boolean }>("POST", `/v1/documents/${id}/refresh`).then((r) => {
+    toast(r.created ? "正在重新抓取：内容有变化时会生成新版本" : "已经在抓取中了");
+    load();
+  }, fail);
   const showText = (vid: string) => {
     if (text?.vid === vid) return setText(null);
     api<string>("GET", `/v1/documents/${id}/versions/${vid}/text`).then((body) => setText({ vid, body }), fail);
@@ -368,6 +416,11 @@ function Detail({ id }: { id: string }) {
               {cur && (<><dt>正文</dt><dd>{cur.char_count.toLocaleString()} 字 · 共 {d.versions.length} 个版本</dd></>)}
             </dl>
             <div className="row" style={{ marginBottom: 0 }}>
+              {d.source_type === "url" && (d.status === "ready" || d.status === "failed") && (
+                <button onClick={() => void refresh()} title="重新读取原网页或飞书文档；内容有变化时生成新版本，旧版本保留">
+                  <Icon name="refresh" />重新抓取
+                </button>
+              )}
               {d.status === "ready" && <button onClick={() => void act("revoke")}>停止使用</button>}
               {d.status === "revoked" && <button onClick={() => void act("restore")}>恢复使用</button>}
               <span className="grow" />

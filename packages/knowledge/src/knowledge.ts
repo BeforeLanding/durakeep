@@ -194,6 +194,39 @@ export class KnowledgeService {
     };
   }
 
+  /**
+   * 重新抓取网页 / 飞书资料（内容有变化时产生新版本，旧版本保留；内容未变则不改动）。
+   * 已有排队或执行中的抓取作业时直接返回它；停用 / 删除中的资料不允许。
+   */
+  async refresh(ownerId: string, documentId: string): Promise<{ jobId: string; created: boolean }> {
+    const now = this.#d.clock.now();
+    const r = await this.#d.db.transaction(async (tx) => {
+      const doc = await getDocument(tx, ownerId, documentId);
+      if (doc.sourceType !== "url" || !doc.sourceUri) throw new AppError("invalid_state", "只有网页或飞书资料可以重新抓取");
+      if (doc.status === "revoked") throw new AppError("invalid_state", "这篇资料已停止使用，请先恢复");
+      if (doc.status === "purging" || doc.status === "purged") throw new AppError("invalid_state", "这篇资料正在被删除");
+      const active = await tx.get<{ id: string }>(
+        `SELECT id FROM app_jobs WHERE owner_id = ? AND kind = 'ingest_url' AND status IN ('queued','running')
+           AND json_extract(input_json, '$.documentId') = ? LIMIT 1`,
+        ownerId,
+        doc.id,
+      );
+      if (active) return { jobId: active.id, created: false };
+      const { job } = await enqueue(tx, now, {
+        ownerId,
+        kind: "ingest_url",
+        dedupeKey: `ingest_url:${urlHash(doc.sourceUri)}:refresh:${now}`,
+        input: { documentId: doc.id, url: doc.sourceUri },
+      });
+      if (doc.status === "failed") {
+        await tx.run("UPDATE app_documents SET status = 'pending', error_code = NULL, updated_at = ? WHERE owner_id = ? AND id = ?", now, ownerId, doc.id);
+      }
+      return { jobId: job.id, created: true };
+    });
+    if (r.created) this.#d.wake?.();
+    return r;
+  }
+
   /** URL（HTTP）：请求级幂等 + 上面的写入。抓取在作业里进行。 */
   async captureUrl(ownerId: string, input: CaptureUrlInput): Promise<CaptureResult> {
     const crid = requireRequestId(input.clientRequestId);

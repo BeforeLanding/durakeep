@@ -148,19 +148,44 @@ function Welcome({ name, onSend, budgetWarning }: { name: string; onSend: (text:
           </div>
         </div>
       </div>
-      <Composer running={false} queued={0} budgetWarning={budgetWarning} onSend={onSend} />
+      <Composer draftKey="new" running={false} queued={0} budgetWarning={budgetWarning} onSend={onSend} />
     </>
   );
 }
 
-function Composer({ running, queued, budgetWarning, onSend, onAbort }: {
+const draftStore = {
+  key: (k: string) => `durakeep:draft:${k}`,
+  get(k: string): string {
+    try {
+      return localStorage.getItem(this.key(k)) ?? "";
+    } catch {
+      return "";
+    }
+  },
+  set(k: string, v: string) {
+    try {
+      if (v.trim() === "") localStorage.removeItem(this.key(k));
+      else localStorage.setItem(this.key(k), v);
+    } catch {
+      /* 存储不可用时不保存草稿 */
+    }
+  },
+};
+
+/** 输入框：每个对话单独保存未发送的草稿（只存在本机浏览器），切换对话或刷新不丢。 */
+function Composer({ draftKey, running, queued, budgetWarning, onSend, onAbort }: {
+  draftKey: string;
   running: boolean;
   queued: number;
   budgetWarning: string | null;
   onSend: (text: string) => Promise<void>;
   onAbort?: () => void;
 }) {
-  const [text, setText] = useState("");
+  const [text, setTextState] = useState(() => draftStore.get(draftKey));
+  const setText = (v: string) => {
+    setTextState(v);
+    draftStore.set(draftKey, v);
+  };
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -302,7 +327,7 @@ function ConversationView({ id, onActivity, budgetWarning }: { id: string; onAct
         )}
         <div ref={endRef} />
       </div>
-      <Composer running={live.running} queued={live.queued} budgetWarning={budgetWarning} onSend={send} onAbort={() => void act("abort")} />
+      <Composer draftKey={id} running={live.running} queued={live.queued} budgetWarning={budgetWarning} onSend={send} onAbort={() => void act("abort")} />
     </>
   );
 }
