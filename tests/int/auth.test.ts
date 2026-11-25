@@ -8,7 +8,7 @@ import { guardDb, migrate, type SqlDatabase } from "../../packages/db/src/index.
 import { openAppDatabase } from "../../packages/runtime-pi/src/index.ts";
 import { createApp, type LogEvent } from "../../apps/server/src/app.ts";
 import { listen } from "../../apps/server/src/listen.ts";
-import { SESSION_TTL_MS } from "../../apps/server/src/auth.ts";
+import { SESSION_TTL_MS, SHORT_SESSION_TTL_MS } from "../../apps/server/src/auth.ts";
 
 const ORIGIN = "http://127.0.0.1:4777";
 const PASSWORD = "correct horse battery";
@@ -126,11 +126,79 @@ test("S3：登出、过期后旧 cookie 无效；cookie 属性正确；库里不
   expect((await get("/v1/me", { Cookie: `sid=${token}` })).status).toBe(401); // 旧 cookie 失效
 
   const again = await login();
-  clock.advance(SESSION_TTL_MS - 1);
-  expect((await get("/v1/me", { Cookie: `sid=${again.token}` })).status).toBe(200);
-  clock.advance(2);
-  expect((await get("/v1/me", { Cookie: `sid=${again.token}` })).status).toBe(401); // 14 天后过期
+  clock.advance(SESSION_TTL_MS + 1);
+  expect((await get("/v1/me", { Cookie: `sid=${again.token}` })).status).toBe(401); // 闲置 14 天后过期
   expect(await db.all("SELECT 1 FROM app_sessions")).toHaveLength(0); // 过期会话被清除
+});
+
+test("保持登录：活跃使用时滑动续期；未勾选时是浏览器会话 cookie，12 小时后过期且不续期", async () => {
+  const kept = await login();
+  clock.advance(SESSION_TTL_MS - 1000);
+  expect((await get("/v1/me", { Cookie: `sid=${kept.token}` })).status).toBe(200); // 剩余不足一半 → 续期
+  clock.advance(SESSION_TTL_MS - 1000);
+  expect((await get("/v1/me", { Cookie: `sid=${kept.token}` })).status).toBe(200);
+
+  const res = await post("/v1/auth/login", { password: PASSWORD, remember: false });
+  expect(res.status).toBe(204);
+  expect(res.headers.get("set-cookie")).not.toMatch(/Max-Age/i);
+  const token = sid(res);
+  clock.advance(SHORT_SESSION_TTL_MS - 1);
+  expect((await get("/v1/me", { Cookie: `sid=${token}` })).status).toBe(200);
+  clock.advance(2);
+  expect((await get("/v1/me", { Cookie: `sid=${token}` })).status).toBe(401);
+  expect((await post("/v1/auth/login", { password: PASSWORD, remember: "yes" })).status).toBe(400);
+});
+
+test("口令错误时告知剩余次数；/v1/auth/status 不需要登录", async () => {
+  const bad = await post("/v1/auth/login", { password: "nope" });
+  expect((await errorOf(bad)).details).toEqual({ attempts_left: 4 });
+  const st = await get("/v1/auth/status");
+  expect(st.status).toBe(200);
+  expect(await st.json()).toEqual({ initialized: true, setup_pending: false });
+});
+
+test("网页改口令：要求当前口令、拒绝弱口令；成功后只保留当前会话", async () => {
+  const a = await login();
+  const b = await login();
+  const change = (body: unknown) => post("/v1/auth/password", body, { Cookie: `sid=${a.token}` });
+  expect((await errorOf(await change({ current_password: "wrong", new_password: "brand new secret" }))).message).toBe("当前口令不正确");
+  expect((await errorOf(await change({ current_password: PASSWORD, new_password: "12345678" }))).message).toContain("太容易");
+  expect((await errorOf(await change({ current_password: PASSWORD, new_password: "short" }))).message).toContain("至少 8");
+  expect((await change({ current_password: PASSWORD, new_password: "brand new secret" })).status).toBe(204);
+  expect((await get("/v1/me", { Cookie: `sid=${a.token}` })).status).toBe(200);
+  expect((await get("/v1/me", { Cookie: `sid=${b.token}` })).status).toBe(401);
+  expect((await login("brand new secret")).res.status).toBe(204);
+  expect(logs.some((l) => JSON.stringify(l).includes("brand new secret"))).toBe(false);
+});
+
+test("会话管理：列出设备、注销单个会话、注销其他全部会话；改名", async () => {
+  const mine = await post("/v1/auth/login", { password: PASSWORD }, { "User-Agent": "Mozilla/5.0 (Windows NT 10.0) AppleWebKit Chrome/140 Safari/537" });
+  const token = sid(mine);
+  const other = await post("/v1/auth/login", { password: PASSWORD }, { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18) Version/18 Safari/604" });
+  const third = await login();
+  const list = async () => ((await (await get("/v1/auth/sessions", { Cookie: `sid=${token}` })).json()) as { items: { id: string; device: string; current: boolean }[] }).items;
+  const items = await list();
+  expect(items).toHaveLength(3);
+  expect(items.find((i) => i.current)?.device).toBe("Chrome · Windows");
+  expect(items.some((i) => i.device === "Safari · iOS")).toBe(true);
+  const rows = await db.all<{ user_agent: string | null }>("SELECT user_agent FROM app_sessions");
+  expect(rows.every((r) => r.user_agent === null || !r.user_agent.includes("Mozilla"))).toBe(true); // 只存摘要
+
+  const iphone = items.find((i) => i.device === "Safari · iOS")!;
+  const del = await h.app.request(`/v1/auth/sessions/${iphone.id}`, { method: "DELETE", headers: { Origin: ORIGIN, Cookie: `sid=${token}` } });
+  expect(del.status).toBe(204);
+  expect((await get("/v1/me", { Cookie: `sid=${sid(other)}` })).status).toBe(401);
+  const again = await h.app.request(`/v1/auth/sessions/${iphone.id}`, { method: "DELETE", headers: { Origin: ORIGIN, Cookie: `sid=${token}` } });
+  expect(again.status).toBe(404);
+
+  expect((await post("/v1/auth/sessions/revoke-others", undefined, { Cookie: `sid=${token}` })).status).toBe(204);
+  expect((await get("/v1/me", { Cookie: `sid=${third.token}` })).status).toBe(401);
+  expect(await list()).toHaveLength(1);
+
+  const rename = await h.app.request("/v1/me", { method: "PATCH", headers: { Origin: ORIGIN, Cookie: `sid=${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ display_name: "  小明 " }) });
+  expect(await rename.json()).toMatchObject({ display_name: "小明" });
+  const empty = await h.app.request("/v1/me", { method: "PATCH", headers: { Origin: ORIGIN, Cookie: `sid=${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ display_name: " " }) });
+  expect(empty.status).toBe(400);
 });
 
 test("S3 补充：改口令使所有会话失效", async () => {

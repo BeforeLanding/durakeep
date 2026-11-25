@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Notification } from "./api.ts";
 import { fmtTime, useGlobalStream } from "./hooks.ts";
+import { Empty, PageHead } from "./ui.tsx";
 
 export function Notifications({ onChange }: { onChange: () => void }) {
   const [items, setItems] = useState<Notification[]>([]);
@@ -15,7 +16,7 @@ export function Notifications({ onChange }: { onChange: () => void }) {
   };
   return (
     <div className="page">
-      <h2>通知</h2>
+      <PageHead title="通知" desc="提醒到点、后台任务完成等消息。" />
       <div className="row">
         <button
           onClick={() => {
@@ -25,7 +26,7 @@ export function Notifications({ onChange }: { onChange: () => void }) {
           全部标为已读
         </button>
       </div>
-      {items.length === 0 && <div className="muted">没有通知。</div>}
+      {items.length === 0 && <Empty icon="bell" title="没有通知" />}
       <ul className="list col-list">
         {items.map((n) => (
           <li key={n.id} className="mem" style={{ opacity: n.read ? 0.6 : 1 }}>

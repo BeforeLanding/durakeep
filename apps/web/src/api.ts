@@ -1,10 +1,12 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  readonly details: Record<string, unknown>;
+  constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -30,9 +32,9 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
     json = undefined;
   }
   if (!res.ok) {
-    const e = (json as { error?: { code?: string; message?: string } } | undefined)?.error;
-    if (res.status === 401 && path !== "/v1/auth/login") onUnauthenticated();
-    throw new ApiError(res.status, e?.code ?? "http_" + res.status, e?.message ?? `请求失败（${res.status}）`);
+    const e = (json as { error?: { code?: string; message?: string; details?: Record<string, unknown> } } | undefined)?.error;
+    if (res.status === 401 && path !== "/v1/auth/login" && path !== "/v1/auth/setup") onUnauthenticated();
+    throw new ApiError(res.status, e?.code ?? "http_" + res.status, e?.message ?? `请求失败（${res.status}）`, e?.details ?? {});
   }
   return json as T;
 }
@@ -112,3 +114,6 @@ export type Reminder = {
   last_occurrence: { fired_at: number; late_ms: number } | null;
 };
 export type Notification = { id: string; kind: string; title: string; body: string; link: string | null; created_at: number; read: boolean };
+
+export type Me = { owner_id: string; display_name: string; timezone: string; capabilities?: { feishu_docs?: boolean } };
+export type Session = { id: string; created_at: number; last_seen_at: number; expires_at: number; device: string; persistent: boolean; current: boolean };

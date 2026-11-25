@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, uuid, type Reminder } from "./api.ts";
 import { fmtTime, useGlobalStream } from "./hooks.ts";
+import { Empty, PageHead } from "./ui.tsx";
 
 const STATUS: Record<string, string> = { active: "进行中", fired: "已触发", cancelled: "已取消" };
 
@@ -15,9 +16,9 @@ export function Reminders({ timezone }: { timezone: string }) {
   useGlobalStream((ev) => ev === "notification" && load());
   return (
     <div className="page">
-      <h2>提醒</h2>
+      <PageHead title="提醒" desc="到点会在浏览器通知你；配置飞书机器人后还会推送到飞书。" />
       <Create timezone={timezone} onDone={load} />
-      <div className="row">
+      <div className="seg">
         {Object.entries(STATUS).map(([k, v]) => (
           <button key={k} className={status === k ? "primary" : ""} onClick={() => setStatus(k)}>
             {v}
@@ -25,7 +26,7 @@ export function Reminders({ timezone }: { timezone: string }) {
         ))}
       </div>
       {err && <div className="error">{err}</div>}
-      {items.length === 0 && <div className="muted">没有提醒。</div>}
+      {items.length === 0 && <Empty icon="alarm" title="没有提醒"><div>在对话里说“明晚八点提醒我……”，或在上方创建。</div></Empty>}
       <ul className="list col-list">
         {items.map((r) => (
           <Row key={r.id} r={r} reload={load} setErr={setErr} />

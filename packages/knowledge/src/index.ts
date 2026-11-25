@@ -2,9 +2,11 @@ export { BlobStore, sha256Hex } from "./blob.ts";
 export { readPurgeLog, replayPurgeLog, type PurgeLog } from "./purge.ts";
 export { decodeBody, detectCharset } from "./charset.ts";
 export { extractHtml, extractPlain, normalizeText } from "./extract.ts";
+export { docxToMarkdown, readZipEntry } from "./docx.ts";
 export { assertRobotsAllows, safeFetch, DEFAULT_POLICY, USER_AGENT, type FetchPolicy } from "./fetch.ts";
 export { isPublicIp } from "./ssrf.ts";
 export { normalizeUrl, urlHash } from "./url.ts";
+export { blocksToMarkdown, FeishuDocsClient, feishuDocsFromEnv, loginWallFor, looksLikeLoginPage, parseFeishuUrl, type FeishuLink } from "./feishu.ts";
 export { normalizeTags, type DocumentRow, type VersionRow } from "./documents.ts";
 export {
   KnowledgeService,

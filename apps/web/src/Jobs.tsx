@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Job } from "./api.ts";
 import { fmtTime, useGlobalStream } from "./hooks.ts";
 import { Outbox } from "./Outbox.tsx";
+import { Empty, PageHead } from "./ui.tsx";
 
 const STATUS: Record<string, string> = { queued: "排队中", running: "进行中", succeeded: "已完成", failed: "失败", cancelled: "已取消" };
 const KIND: Record<string, string> = {
@@ -35,9 +36,9 @@ export function Jobs({ timezone }: { timezone: string }) {
   const act = (id: string, what: "retry" | "cancel") => api("POST", `/v1/jobs/${id}/${what}`).then(load, (e: Error) => setErr(e.message));
   return (
     <div className="page">
-      <h2>任务</h2>
+      <PageHead title="任务" desc="抓取、索引、摘要、备份等后台作业的进度与错误。" />
       {err && <div className="error">{err}</div>}
-      {jobs.length === 0 && <div className="muted">没有任务。</div>}
+      {jobs.length === 0 && <Empty icon="jobs" title="没有任务" />}
       <div className="ops-table"><table className="table">
         <tbody>
           {jobs.map((j) => (

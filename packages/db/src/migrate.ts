@@ -320,6 +320,14 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       CREATE INDEX app_outbox_recent ON app_outbox(owner_id, id DESC);
     `,
   },
+  {
+    // 会话管理：设备说明（User-Agent 摘要）与“保持登录”（非持久会话不做滑动续期）
+    id: 13,
+    sql: `
+      ALTER TABLE app_sessions ADD COLUMN user_agent TEXT;
+      ALTER TABLE app_sessions ADD COLUMN persistent INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

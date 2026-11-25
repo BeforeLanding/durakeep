@@ -296,3 +296,13 @@
 - 改动：中英文 README 顶部改为居中的一句话定位、CI/Node/许可证徽章和演示 GIF，新增 Mermaid 架构一览，设置页截图折叠。新增 `scripts/record-demo.ts`，可用 `node scripts/record-demo.ts` 重新生成 `docs/assets/demo.gif`（隔离 demo、faux 模型、系统 ffmpeg，不下载任何东西）。
 - GIF：覆盖收藏资料、带引用的回答、悬停原文、设置提醒、通知到达；裁掉等待整分钟的空白，14.5 秒、960×576、10 fps、196,713 字节（旧版 19.3 秒，其中约 8 秒静止）。
 - 测试：未运行 `pnpm test`（只改文档、脚本与图片）；`pnpm lint` 见提交前结果。零付费模型调用。
+
+## 2026-11-25 试用反馈：登录、飞书链接、界面
+
+用户试用后反馈三点：登录过于 demo、上传飞书文档链接显示失败、界面朴素。
+
+- **飞书链接失败的原因。** 未登录抓取飞书文档会被 302 到 `accounts.feishu.cn/.../login`，旧逻辑把登录页当正文入库（`larkoffice.com` 在本机直接连接失败）。改动：`packages/knowledge/src/feishu.ts` 识别飞书 / Lark 的 docx、旧版 doc、wiki 链接；配置 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（自建应用）时经开放平台读取文档块并转 Markdown（标题、列表、代码、引用、表格、行内样式），wiki 先解析节点；开放平台错误码映射为 `permission_denied`（提示“添加文档应用”或开通权限）/ `login_required`（凭据无效）/ `not_found`。未配置时 `POST /v1/documents` 直接 422 `login_required`，不建失败资料。腾讯文档、Notion、石墨、钉钉同样提交时拒绝；其他网址被重定向到登录页时作业以 `login_required` 失败。新增错误码 `login_required`、`permission_denied`（06 §1）。飞书客户端只在 dev / prod 构造，test / demo 不联网。
+- **上传。** 新增 `.docx`（无依赖的 zip 读取 + document.xml → Markdown，≤10 MB，请求体上限相应提高到 11 MB）与 `.html` / `.htm`；文本文件 UTF-8 失败时按 GB18030 解码（Windows 下的 GBK 文本）。飞书可“导出为 Word”后上传。
+- **登录与账户。** 首次启动（dev / prod，无 owner）先起设置服务并在终端打印一次性 8 位设置码，网页完成设置后创建 owner、签发会话、继续正常启动（`apps/server/src/setup.ts`）。登录支持“保持登录”（持久会话滑动续期；不勾选为浏览器会话 cookie、12 小时过期），口令错误提示剩余次数，锁定倒计时，大写锁定提示。设置页新增个人资料、改口令（校验当前口令、拒绝弱口令、注销其他会话）、登录设备列表（只存“浏览器 · 系统”摘要）与逐个 / 全部注销。迁移 13：`app_sessions` 加 `user_agent`、`persistent`。
+- **界面。** 重做设计系统（亮 / 暗色、左侧导航、窄屏抽屉、toast、空状态）；登录 / 设置页为双栏品牌页；对话页加欢迎页（问候、资料 / 记忆 / 提醒计数、四个可直接发送的示例）、Markdown 渲染（只生成 React 节点，引用标记保持可悬停）、工具调用中文标签、自适应输入框；资料页改为卡片列表、拖拽多文件上传、粘贴飞书等链接时即时提示、失败资料直接显示作业的错误原因并可重试。
+- **测试。** 新增 `feishu.test.ts`（6）、`docx.test.ts`（2）、`tests/int/setup.test.ts`（3）；`auth.test.ts` 新增 4 个用例，S3 的过期断言改为“闲置 14 天过期”（滑动续期后活跃会话不再固定 14 天）；`ingest.test.ts` 新增 3 个（Word / HTML / GBK 上传、未配置飞书 422、配置后经假开放平台导入与登录墙重定向）。`pnpm test` 57 文件 295 用例通过；`pnpm test:upgrade` 20 用例通过（迁移计数 2→3）；`pnpm lint` 通过；`pnpm test:e2e` 通过（选择器未改）。`pnpm test:recovery` 未运行。手动：demo 下走通登录、欢迎页示例 → 带引用回答、资料页飞书链接提示与拒绝、设置页；dev 模式（`DEEPSEEK_API_KEY` 置空、临时数据目录）走通首次设置 → 自动登录。零付费模型调用；未用真实飞书凭据验证开放平台调用（只用假响应测试）。

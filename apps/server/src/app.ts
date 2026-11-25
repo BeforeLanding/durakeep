@@ -7,7 +7,7 @@ import type { CitationValidator, KnowledgeService } from "@durakeep/knowledge";
 import type { MemoryService } from "@durakeep/memory";
 import { changeOutbox, listOutbox } from "@durakeep/outbox";
 import type { ReminderService } from "@durakeep/reminders";
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -45,6 +45,8 @@ const STATUS: Record<ErrorCode, 400 | 401 | 403 | 404 | 409 | 413 | 422 | 423 | 
   fetch_failed: 502,
   fetch_timeout: 504,
   extract_failed: 422,
+  login_required: 422,
+  permission_denied: 422,
   locked: 423,
   rate_limited: 429,
   runtime_unavailable: 503,
@@ -83,6 +85,8 @@ export type AppDeps = {
   events?: EventStore;
   orphanedBackgroundConversations?: number;
   feishuConfigured?: boolean;
+  /** 是否配置了飞书文档导入（FEISHU_APP_ID / FEISHU_APP_SECRET）；前端据此提示。 */
+  feishuDocsConfigured?: boolean;
   wakeOutbox?: () => void;
   runbookPath?: string;
   /** SSE 参数：快照节流（默认 100 ms）、keep-alive 间隔（默认 15 s）。 */
@@ -96,6 +100,16 @@ export type AppDeps = {
 export type AppEnv = { Variables: { owner: Owner } };
 
 export const LIMITS = { login: 10, message: 30, capture: 20 } as const; // 每分钟
+
+/** 会话 cookie：勾选“保持登录”时带 maxAge（持久），否则是浏览器会话 cookie。 */
+export function setSessionCookie(c: Context, token: string, persistent: boolean): void {
+  setCookie(c, "sid", token, {
+    httpOnly: true,
+    sameSite: "Strict",
+    path: "/",
+    ...(persistent ? { maxAge: Math.floor(SESSION_TTL_MS / 1000) } : {}),
+  });
+}
 
 export function createApp(deps: AppDeps) {
   const auth = new AuthService(deps.db, deps.clock);
@@ -131,7 +145,7 @@ export function createApp(deps: AppDeps) {
     throw new AppError("too_large", "请求体过大");
   };
   const smallBody = bodyLimit({ maxSize: 1024 * 1024, onError: tooLarge });
-  const captureBody = bodyLimit({ maxSize: 3 * 1024 * 1024, onError: tooLarge }); // 50 万字符 ≈ 1.5 MB，上传 ≤2 MB
+  const captureBody = bodyLimit({ maxSize: 11 * 1024 * 1024, onError: tooLarge }); // 文本 ≤2 MB、Word ≤10 MB（multipart 另有少量开销）
   app.use("*", (c, next) => (c.req.method === "POST" && c.req.path === "/v1/documents" ? captureBody(c, next) : smallBody(c, next)));
 
   // FR-AUTH-03 / S4：修改类请求检查来源
@@ -160,7 +174,7 @@ export function createApp(deps: AppDeps) {
     await next();
   };
   app.use("/v1/*", async (c, next) => {
-    if (c.req.path === "/v1/auth/login" || c.req.path === "/v1/health") return next();
+    if (c.req.path === "/v1/auth/login" || c.req.path === "/v1/auth/status" || c.req.path === "/v1/health") return next();
     return requireAuth(c, next);
   });
 
@@ -169,22 +183,47 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true });
   });
 
+  // 未登录也可访问：前端据此决定显示登录页还是首次设置页
+  app.get("/v1/auth/status", async (c) => c.json({ initialized: await auth.isInitialized(), setup_pending: false }));
+
   app.post("/v1/auth/login", async (c) => {
     const wait = limiter.hit("login", deps.limits?.login ?? LIMITS.login);
     if (wait !== undefined) throw new AppError("rate_limited", "请求过于频繁", { retry_after_ms: wait });
     const body = await readJson(c);
     const password = (body as { password?: unknown } | null)?.password;
+    const remember = (body as { remember?: unknown } | null)?.remember;
     if (typeof password !== "string" || password.length === 0 || password.length > 256) {
       throw new AppError("invalid_request", "参数无效", { issues: [{ path: "password", message: "需要非空字符串（≤256）" }] });
     }
-    const session = await auth.login(password);
-    setCookie(c, "sid", session.token, {
-      httpOnly: true,
-      sameSite: "Strict",
-      path: "/",
-      maxAge: Math.floor(SESSION_TTL_MS / 1000),
-    });
+    if (remember !== undefined && typeof remember !== "boolean") {
+      throw new AppError("invalid_request", "参数无效", { issues: [{ path: "remember", message: "需为布尔值" }] });
+    }
+    const session = await auth.login(password, { remember: remember ?? true, userAgent: c.req.header("User-Agent") });
+    setSessionCookie(c, session.token, session.persistent);
     log({ level: "info", event: "auth.login", owner_id: session.ownerId });
+    return c.body(null, 204);
+  });
+
+  app.post("/v1/auth/password", async (c) => {
+    const wait = limiter.hit("password", deps.limits?.login ?? LIMITS.login);
+    if (wait !== undefined) throw new AppError("rate_limited", "请求过于频繁", { retry_after_ms: wait });
+    const body = (await readJson(c)) as { current_password?: unknown; new_password?: unknown } | null;
+    if (typeof body?.current_password !== "string" || typeof body.new_password !== "string") {
+      throw new AppError("invalid_request", "需要 current_password 与 new_password");
+    }
+    const owner = c.get("owner");
+    await auth.changePasswordVerified(owner.id, body.current_password, body.new_password, getCookie(c, "sid"));
+    log({ level: "info", event: "auth.password_changed", owner_id: owner.id });
+    return c.body(null, 204);
+  });
+
+  app.get("/v1/auth/sessions", async (c) => c.json({ items: await auth.listSessions(c.get("owner").id, getCookie(c, "sid")) }));
+  app.post("/v1/auth/sessions/revoke-others", async (c) => {
+    await auth.revokeOthers(c.get("owner").id, getCookie(c, "sid"));
+    return c.body(null, 204);
+  });
+  app.delete("/v1/auth/sessions/:id", async (c) => {
+    await auth.revokeSession(c.get("owner").id, c.req.param("id"));
     return c.body(null, 204);
   });
 
@@ -195,9 +234,16 @@ export function createApp(deps: AppDeps) {
     return c.body(null, 204);
   });
 
+  const capabilities = { feishu_docs: deps.feishuDocsConfigured ?? false };
   app.get("/v1/me", (c) => {
     const o = c.get("owner");
-    return c.json({ owner_id: o.id, display_name: o.displayName, timezone: o.timezone });
+    return c.json({ owner_id: o.id, display_name: o.displayName, timezone: o.timezone, capabilities });
+  });
+  app.patch("/v1/me", async (c) => {
+    const o = c.get("owner");
+    const body = (await readJson(c)) as { display_name?: unknown } | null;
+    const name = await auth.updateProfile(o.id, body?.display_name);
+    return c.json({ owner_id: o.id, display_name: name, timezone: o.timezone, capabilities });
   });
 
   app.get("/v1/settings", async (c) => c.json(await readSettings(deps.db, c.get("owner").id, deps.chatModel)));

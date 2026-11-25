@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, uuid, type Memory, type MemoryRevision } from "./api.ts";
 import { fmtTime } from "./hooks.ts";
+import { Empty, PageHead } from "./ui.tsx";
 
 const TABS: [string, string][] = [
   ["confirmed", "已确认"],
@@ -20,8 +21,8 @@ export function Memories() {
   useEffect(load, [load]);
   return (
     <div className="page">
-      <h2>记忆</h2>
-      <div className="row">
+      <PageHead title="记忆" desc="助理长期记住的偏好与背景，会影响之后每一次回答。你可以随时修改或停用。" />
+      <div className="seg">
         {TABS.map(([k, v]) => (
           <button key={k} className={tab === k ? "primary" : ""} onClick={() => setTab(k)}>
             {v}
@@ -30,7 +31,7 @@ export function Memories() {
       </div>
       {tab === "confirmed" && <AddMemory onDone={load} />}
       {err && <div className="error">{err}</div>}
-      {items.length === 0 && <div className="muted">这里还没有记忆。</div>}
+      {items.length === 0 && <Empty icon="brain" title="这里还没有记忆"><div>在对话里说“记住……”，或在上方手动添加。</div></Empty>}
       <ul className="list col-list">
         {items.map((m) => (
           <MemoryRow key={m.id} m={m} reload={load} setErr={setErr} />

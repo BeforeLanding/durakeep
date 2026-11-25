@@ -68,16 +68,18 @@ P0–P3 are complete.
 
 ## Run with your own data
 
-After installing dependencies, create an account while the server is stopped, then build the web app:
+After installing dependencies, build the web UI, set `DEEPSEEK_API_KEY` in the service account's environment, and start the service:
 
 ```bash
-pnpm cli init --timezone=Asia/Shanghai
 pnpm web:build
+pnpm dev
 ```
 
-Set `DEEPSEEK_API_KEY` in the service account's environment, start `pnpm dev`, and sign in to the [local interface](http://127.0.0.1:4777) with the passphrase you created. The default model is `deepseek-flash`. You can change it in Settings. The server listens only on `127.0.0.1:4777` by default and stores data in `data/`. If you set `DATA_DIR`, use the same directory for initialization, the service, and offline CLI commands. For long-running deployments with Windows Task Scheduler or Linux systemd, see the [runbook](docs/runbook.md).
+On first start the terminal prints an 8-character setup code. Open the [local UI](http://127.0.0.1:4777), enter the code, a display name, and a passphrase to finish setup and sign in. Afterwards sign in with that passphrase, optionally staying signed in. The passphrase, display name, and signed-in devices are managed on the Settings page. You can still create the account with `pnpm cli init --timezone=Asia/Shanghai` while the service is stopped. The default model is `deepseek-flash`, adjustable in Settings. The service listens on `127.0.0.1:4777` only. The default data directory is `data/`; if you set `DATA_DIR`, use the same directory for the service and offline CLI. For long-running use, see the [runbook](docs/runbook.md) for Windows Task Scheduler or Linux systemd.
 
 ## Data transfer, durability, and deletion
+
+**Importing Feishu docs.** Feishu documents require sign-in, so pasting a link cannot fetch them directly. Create a custom app on the Feishu Open Platform with `docx:document:readonly` and `wiki:wiki:readonly`, publish it, and set `FEISHU_APP_ID` and `FEISHU_APP_SECRET` in the service account's environment. Add the app to each document via "…" → "Add document app"; then paste the doc or wiki link to import it. Alternatively, export the doc as Word and upload the `.docx` on the Library page.
 
 To receive reminders in a Feishu or Lark group, set `FEISHU_WEBHOOK_URL` in the service account's environment. Set `FEISHU_WEBHOOK_SECRET` if the bot requires signatures. Once enabled, reminder titles, scheduled times, and late-delivery indicators are sent to the group. If the Jobs page marks a delivery as needing review, check the group before marking it delivered, retrying, or abandoning it. [Feishu setup and review procedure](docs/runbook.md#飞书外部提醒)
 

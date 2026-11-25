@@ -30,7 +30,7 @@
 | 404 | `not_found` | 资源不存在，或不属于当前 owner（两种情况不区分） |
 | 409 | `idempotency_conflict` / `conversation_busy` / `revision_conflict` / `invalid_state` | 冲突 |
 | 413 | `too_large` | 超过大小限制（JSON 请求体默认上限 1 MB；文件上传另有 2 MB 上限，在 T-13 实现） |
-| 422 | `ssrf_blocked` / `unsupported_type` / `robots_disallowed` / `extract_failed` / `time_in_past` | 业务规则拒绝（采集类错误码也会出现在作业和资料的 `error_code` 里，不一定是 HTTP 响应） |
+| 422 | `ssrf_blocked` / `unsupported_type` / `robots_disallowed` / `extract_failed` / `login_required` / `permission_denied` / `time_in_past` | 业务规则拒绝（采集类错误码也会出现在作业和资料的 `error_code` 里，不一定是 HTTP 响应） |
 | 423 | `locked` | 登录失败次数过多，暂时锁定 |
 | 429 | `rate_limited` | 限流 |
 | 502 / 504 | `fetch_failed` / `fetch_timeout` | 抓取目标网站失败 / 超时（只出现在作业与资料的 `error_code` 里） |
@@ -42,9 +42,18 @@
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
-| POST | `/v1/auth/login` | `{ "password": "..." }`（非空字符串，≤256） | 204，并设置 `sid` cookie（HttpOnly、SameSite=Strict、Path=/、Max-Age=14 天）；失败返回 401；连续失败 5 次锁定 60 s，期间一律返回 423，`error.details.retry_after_ms` 与 `Retry-After` 头（秒）给出剩余时间；登录接口每分钟 10 次，超出返回 429 |
+| GET | `/v1/auth/status` | —（不需要登录） | `{ "initialized", "setup_pending" }`；前端据此显示登录页或首次设置页 |
+| POST | `/v1/auth/setup` | `{ "setup_code", "password", "display_name"?, "timezone"? }` | 只在首次设置服务里存在（见下）。设置码错误 401（累计 10 次后 423，需重启换码）；口令弱 400；成功 204 并设置持久 `sid` cookie；已设置 409 |
+| POST | `/v1/auth/login` | `{ "password": "...", "remember"?: boolean }`（口令非空，≤256；`remember` 缺省 true） | 204，并设置 `sid` cookie（HttpOnly、SameSite=Strict、Path=/）。`remember=true`：Max-Age=14 天，活跃使用时剩余不足一半即滑动续期；`remember=false`：浏览器会话 cookie，服务端 12 小时后过期、不续期。失败返回 401，`details.attempts_left` 给出锁定前剩余次数；连续失败 5 次锁定 60 s，期间一律返回 423，`error.details.retry_after_ms` 与 `Retry-After` 头（秒）给出剩余时间；登录接口每分钟 10 次，超出返回 429 |
 | POST | `/v1/auth/logout` | — | 204，删除会话 |
-| GET | `/v1/me` | — | `{ "owner_id", "display_name", "timezone" }` |
+| POST | `/v1/auth/password` | `{ "current_password", "new_password" }` | 204；当前口令错误 400；新口令需 8–256 字符且不能是单字符重复、顺序串或常见弱口令；成功后删除**除当前会话外**的所有会话；与登录共用限流 |
+| GET | `/v1/auth/sessions` | — | `{ items: [{ id, device, created_at, last_seen_at, expires_at, persistent, current }] }`；`id` 为 token 哈希前 16 位；`device` 只存“浏览器 · 系统”摘要，不存完整 User-Agent |
+| DELETE | `/v1/auth/sessions/:id` | — | 204；不存在 404 |
+| POST | `/v1/auth/sessions/revoke-others` | — | 204，注销当前会话以外的全部会话 |
+| GET | `/v1/me` | — | `{ "owner_id", "display_name", "timezone", "capabilities": { "feishu_docs" } }` |
+| PATCH | `/v1/me` | `{ "display_name" }`（1–40 字符） | 同 GET |
+
+**首次设置（dev / prod）。** 启动时库里没有 owner，主进程先只起一个设置服务（同一端口，只有 `/v1/health`、`/v1/auth/status`、`/v1/auth/setup` 与静态文件，其余 `/v1/*` 返回 503 `setup_required`），并在终端打印一次性 8 位设置码。网页提交设置码与口令后创建 owner、签发会话，设置服务关闭，进程继续正常启动（各服务启动时就需要 owner_id）。`pnpm cli init` 仍可用；test / demo 模式不进入设置服务。
 
 ## 3. 会话
 
@@ -121,6 +130,8 @@ POST /v1/conversations/01J…/messages
 | GET | `/v1/documents/:id/conversations` | `{ items: [{ id, title, archived, last_active_at }] }`：检索结果里出现过这份资料的会话（含已归档），用于彻底删除前归档 |
 | GET | `/v1/chunks/:id` | 引用悬停时用：返回 `{ id, document_id, version_id, title, loc, char_start, char_end, text }`；校验 owner 和 `active`，不满足一律 404 |
 | GET | `/v1/search?q=&top_k=10` | 调试和资料页搜索；与 `kb_search` 使用同一条检索链路 |
+
+**飞书 / Lark 文档与登录墙。** 飞书文档网页需要登录且由前端脚本渲染，直接抓取只会拿到登录页。识别为飞书链接（`*.feishu.cn`、`*.larkoffice.com`、`*.larksuite.com` 的 `/docx/`、`/docs/`、`/wiki/`）时：配置了 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（飞书自建应用，需开通 `docx:document:readonly`、`wiki:wiki:readonly`，并在文档中“添加文档应用”）则在作业里经开放平台读取文档块并转成 Markdown；未配置则 `POST /v1/documents` 直接返回 422 `login_required`，不建资料。表格、多维表格等返回 `unsupported_type`。腾讯文档、Notion、石墨、钉钉文档同样在提交时返回 `login_required`。其他网址若抓取被重定向到登录页（主机名以 accounts./passport./login./sso. 等开头，或路径含 /login、/signin 等），作业以 `login_required` 失败。应用无权读取文档时为 `permission_denied`。
 
 **采集：**
 

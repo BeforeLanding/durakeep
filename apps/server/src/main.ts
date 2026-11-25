@@ -7,7 +7,7 @@ import { BackgroundModel, JobWorker } from "@durakeep/jobs";
 import { ExtractionService, MemoryService } from "@durakeep/memory";
 import { enqueueFeishu, feishuFromEnv, OutboxWorker } from "@durakeep/outbox";
 import { ReminderService, Scheduler } from "@durakeep/reminders";
-import { BlobStore, CitationValidator, createChunkIndexer, isPublicIp, KnowledgeRetrieval, KnowledgeService, readPurgeLog, replayPurgeLog, type FetchPolicy } from "@durakeep/knowledge";
+import { BlobStore, CitationValidator, createChunkIndexer, feishuDocsFromEnv, isPublicIp, KnowledgeRetrieval, KnowledgeService, readPurgeLog, replayPurgeLog, type FetchPolicy } from "@durakeep/knowledge";
 import { appCompaction, appCoreExtension, appGuardExtension, appKnowledgeExtension, appMemoryExtension, appProfileExtension, appRemindersExtension, demoFaux, demoScriptedFaux, openAppDatabase, PiRuntime, presentPiReport, startPi } from "@durakeep/runtime-pi";
 import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +21,7 @@ import { listen } from "./listen.ts";
 import { isChatModel, readChatModel } from "./settings.ts";
 import { UsageMeter } from "./usage.ts";
 import { EventStore } from "./events.ts";
+import { newSetupCode, runSetupServer } from "./setup.ts";
 
 const mode = readAppMode();
 // demo：临时数据目录（除非显式指定），固定的公开演示口令。
@@ -51,6 +52,15 @@ await migrate(db);
 if (mode === "demo" && !(await db.get("SELECT id FROM app_owners LIMIT 1"))) {
   await new AuthService(db, systemClock).initOwner({ password: "demodemo", timezone: "Asia/Shanghai" });
 }
+const webDist = resolve(import.meta.dirname, "../../web/dist");
+// 首次启动（dev / prod，还没有 owner）：先起只含设置接口的小服务，等用户在网页上完成设置再继续启动。
+// test 模式保持旧行为（由测试用 cli init 创建 owner），demo 模式上面已自动创建。
+if (mode !== "test" && mode !== "demo" && !(await db.get("SELECT id FROM app_owners LIMIT 1"))) {
+  await runSetupServer({
+    db, clock: systemClock, origin: `http://${host}:${port}`, code: newSetupCode(), host, port, log,
+    ...(existsSync(webDist) ? { staticDir: webDist } : {}),
+  });
+}
 const hub = new EventHub();
 let healthy = true;
 let closing = false;
@@ -66,6 +76,7 @@ const eventFailure = () => log({ level: "warn", event: "event.write_failed" });
 const fetchPolicy: Partial<FetchPolicy> | undefined =
   mode === "test" && process.env.FETCH_ALLOW_LOOPBACK === "1" ? { isPublicIp: (ip) => ip === "127.0.0.1" || isPublicIp(ip) } : undefined;
 const blobs = new BlobStore(resolve(dataDir, "blobs"));
+const feishuDocs = mode === "test" || mode === "demo" ? undefined : feishuDocsFromEnv(process.env);
 const purgeLogPath = resolve(dataDir, "purge-log.jsonl");
 await replayPurgeLog({ db, blobs, clock: systemClock }, readPurgeLog(purgeLogPath));
 const memory = new MemoryService(db, systemClock);
@@ -80,6 +91,8 @@ const knowledge = new KnowledgeService({
   wake: () => worker.wake(), // worker 在下面创建；wake 只会在它创建之后被调用
   background,
   purgeLogPath,
+  // 飞书文档导入只在 dev / prod 启用（会访问飞书开放平台）；test / demo 一律不联网
+  ...(feishuDocs ? { feishu: feishuDocs } : {}),
 });
 let budgetPaused: boolean | undefined;
 const extraction = new ExtractionService({
@@ -205,7 +218,6 @@ if (ownerId) await events.record(ownerId, "recovery.scan", ingressRecovery.faile
 worker.start(); // 后台作业要用运行时，所以在它就绪之后才开始领取
 const stopUsage = ownerId ? usage.start(ownerId, onUsageError) : undefined;
 
-const webDist = resolve(import.meta.dirname, "../../web/dist");
 const { app } = createApp({
   db,
   clock: systemClock,
@@ -223,6 +235,7 @@ const { app } = createApp({
   events,
   orphanedBackgroundConversations,
   feishuConfigured: feishu !== undefined,
+  feishuDocsConfigured: feishuDocs !== undefined,
   wakeOutbox: () => outbox?.wake(),
   runbookPath: resolve(import.meta.dirname, "../../../docs/runbook.md"),
   hub,

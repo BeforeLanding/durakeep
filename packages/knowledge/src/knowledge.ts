@@ -23,6 +23,7 @@ import { setActiveChunks } from "./indexer.ts";
 import { CHUNKER_VERSION } from "./chunker.ts";
 import { assertRobotsAllows, safeFetch, type FetchPolicy } from "./fetch.ts";
 import { normalizeUrl, urlHash } from "./url.ts";
+import { loginWallFor, looksLikeLoginPage, parseFeishuUrl, type FeishuDocsClient } from "./feishu.ts";
 
 export const MAX_TEXT_CHARS = 500_000; // 07 / 03 §7：正文 ≤500k 字符
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 上传 ≤2 MB
@@ -62,6 +63,8 @@ export type KnowledgeDeps = {
   background?: BackgroundModel;
   /** purge-log.jsonl 的路径（07 §6）；不提供则不写。 */
   purgeLogPath?: string;
+  /** 飞书 / Lark 文档导入（开放平台自建应用凭据）；不提供时飞书链接直接报 login_required。 */
+  feishu?: FeishuDocsClient;
 };
 
 export type CaptureResult = { documentId: string; jobId: string | null; status: "pending" | "ready" | "revoked" | "failed"; deduplicated: boolean };
@@ -79,7 +82,7 @@ export type CaptureTextInput = {
 export type CaptureUrlInput = { clientRequestId: string; url: string; tags?: unknown };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PERMANENT = new Set(["ssrf_blocked", "unsupported_type", "too_large", "robots_disallowed", "extract_failed", "invalid_request"]);
+const PERMANENT = new Set(["ssrf_blocked", "unsupported_type", "too_large", "robots_disallowed", "extract_failed", "invalid_request", "login_required", "permission_denied", "not_found"]);
 
 function requireRequestId(id: unknown): string {
   if (typeof id !== "string" || !UUID.test(id)) {
@@ -156,6 +159,12 @@ export class KnowledgeService {
   planCaptureUrl(ownerId: string, input: { url: unknown; tags?: unknown }): CapturePlan {
     if (typeof input.url !== "string") throw new AppError("invalid_request", "url 必须是字符串", { issues: [{ path: "url" }] });
     const url = normalizeUrl(input.url);
+    // 需要登录才能看的站点：提交时就给出可操作的提示，而不是建一条注定失败的资料
+    if (parseFeishuUrl(url) && !this.#d.feishu) {
+      throw new AppError("login_required", "飞书文档需要登录才能读取。在服务端配置 FEISHU_APP_ID / FEISHU_APP_SECRET（飞书自建应用）后即可直接导入；也可以在飞书里导出为 Word 后上传");
+    }
+    const wall = loginWallFor(url);
+    if (wall) throw wall;
     const tags = normalizeTags(input.tags);
     const now = this.#d.clock.now();
     const args: Json = { type: "url", url, tags };
@@ -375,10 +384,21 @@ export class KnowledgeService {
         let rawHash = typeof checkpoint.raw === "string" ? checkpoint.raw : undefined;
         if (!rawHash || !this.#d.blobs.has(rawHash)) {
           const url = input.url!;
-          await assertRobotsAllows(url, this.#d.fetchPolicy);
-          const res = await safeFetch(url, this.#d.fetchPolicy);
-          rawHash = this.#d.blobs.put(res.bytes);
-          contentType = res.contentType ?? "";
+          const feishuLink = parseFeishuUrl(url);
+          if (feishuLink) {
+            if (!this.#d.feishu) throw new AppError("login_required", "飞书文档需要配置飞书应用凭据才能导入");
+            const fd = await this.#d.feishu.read(feishuLink);
+            rawHash = this.#d.blobs.put(fd.markdown);
+            contentType = "text/markdown; charset=utf-8";
+          } else {
+            await assertRobotsAllows(url, this.#d.fetchPolicy);
+            const res = await safeFetch(url, this.#d.fetchPolicy);
+            if (looksLikeLoginPage(res.finalUrl)) {
+              throw new AppError("login_required", "这个页面需要登录才能查看（被重定向到了登录页）；请复制正文粘贴，或导出文件后上传");
+            }
+            rawHash = this.#d.blobs.put(res.bytes);
+            contentType = res.contentType ?? "";
+          }
           await ctx.save({ raw: rawHash, contentType });
           fault("job.after_fetch"); // 原文已写入 blob、版本记录尚未写入（R13）
         }

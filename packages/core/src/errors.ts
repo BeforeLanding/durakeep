@@ -16,6 +16,8 @@ export type ErrorCode =
   | "fetch_failed"
   | "fetch_timeout"
   | "extract_failed"
+  | "login_required"
+  | "permission_denied"
   | "locked"
   | "rate_limited"
   | "runtime_unavailable"

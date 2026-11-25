@@ -1,7 +1,7 @@
 import { AppError, type Clock } from "@durakeep/core";
 import type { SqlDatabase } from "@durakeep/db";
 import { cancelJob, getJob, listJobs, retryJob, type JobRow, type JobStatus } from "@durakeep/jobs";
-import { MAX_UPLOAD_BYTES, type DocumentRow, type KnowledgeService, type VersionRow } from "@durakeep/knowledge";
+import { docxToMarkdown, extractHtml, MAX_UPLOAD_BYTES, type DocumentRow, type KnowledgeService, type VersionRow } from "@durakeep/knowledge";
 import type { Hono } from "hono";
 import type { AppEnv } from "./app.ts";
 import { parseLimit, readJson } from "./http.ts";
@@ -44,7 +44,25 @@ export const presentJob = (j: JobRow) => ({
 });
 
 const JOB_STATUSES = new Set<JobStatus>(["queued", "running", "succeeded", "failed", "cancelled"]);
-const UPLOAD_EXT: Record<string, "markdown" | "text"> = { ".md": "markdown", ".markdown": "markdown", ".txt": "text" };
+type UploadKind = "markdown" | "text" | "html" | "docx";
+const UPLOAD_EXT: Record<string, UploadKind> = {
+  ".md": "markdown", ".markdown": "markdown", ".txt": "text", ".html": "html", ".htm": "html", ".docx": "docx",
+};
+/** Word 文件常带图片，体积大但文字少，单独放宽到 10 MB；文本类仍是 2 MB。 */
+export const MAX_DOCX_BYTES = 10 * 1024 * 1024;
+
+/** 文本文件：先按 UTF-8 严格解码，失败再按 GB18030（Windows 下常见的 GBK 文本）解码。 */
+function decodeTextFile(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    try {
+      return new TextDecoder("gb18030", { fatal: true }).decode(bytes);
+    } catch {
+      throw new AppError("invalid_request", "无法识别文件编码，请另存为 UTF-8 后再上传");
+    }
+  }
+}
 
 /** 文件名只用于生成默认标题：去掉路径与控制字符；永远不参与任何文件路径（S12）。 */
 export function titleFromFilename(name: string): string {
@@ -89,14 +107,28 @@ export function mountDocumentRoutes(
       const file = form.file;
       if (!(file instanceof File)) throw new AppError("invalid_request", "缺少 file 字段", { issues: [{ path: "file" }] });
       const ext = /\.[^./\\]+$/.exec(file.name)?.[0]?.toLowerCase() ?? "";
-      const kind = UPLOAD_EXT[ext];
-      if (!kind) throw new AppError("unsupported_type", "只支持 .md、.markdown 和 .txt 文件");
-      if (file.size > MAX_UPLOAD_BYTES) throw new AppError("too_large", "文件不能超过 2 MB");
+      const uploadKind = UPLOAD_EXT[ext];
+      if (!uploadKind) throw new AppError("unsupported_type", "支持 Word（.docx）、Markdown、纯文本和网页（.html）文件");
+      if (uploadKind === "docx" ? file.size > MAX_DOCX_BYTES : file.size > MAX_UPLOAD_BYTES) {
+        throw new AppError("too_large", uploadKind === "docx" ? "Word 文件不能超过 10 MB" : "文件不能超过 2 MB");
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
       let text: string;
-      try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(await file.arrayBuffer()));
-      } catch {
-        throw new AppError("invalid_request", "文件需为 UTF-8 编码");
+      let kind: "markdown" | "text" = uploadKind === "text" ? "text" : "markdown";
+      let ownTitle: string | undefined;
+      if (uploadKind === "docx") {
+        const md = docxToMarkdown(bytes);
+        text = md.markdown;
+        ownTitle = titleFromFilename(file.name) || md.title; // Word：文件名通常就是文档标题（飞书导出亦然）
+      } else if (uploadKind === "html") {
+        const ex = extractHtml(decodeTextFile(bytes));
+        text = ex.markdown;
+        ownTitle = ex.title || undefined;
+        kind = "markdown";
+      } else {
+        text = decodeTextFile(bytes);
+        // Markdown 自带 # 标题时交给 captureText 从正文取；否则用文件名
+        if (!(kind === "markdown" && /^#{1,6}\s+\S/m.test(text))) ownTitle = titleFromFilename(file.name);
       }
       let tags: unknown;
       if (typeof form.tags === "string" && form.tags !== "") {
@@ -109,8 +141,8 @@ export function mountDocumentRoutes(
       r = await knowledge.captureText(owner.id, {
         clientRequestId: form.client_request_id as string,
         kind,
-        // 标题优先级：文档自己的 # 标题 > 文件名（只当标题用）> 首行文字（由 captureText 兜底）
-        title: (kind === "markdown" && /^#{1,6}\s+\S/m.test(text) ? undefined : titleFromFilename(file.name)) || undefined,
+        // 标题优先级：文档自己的标题 > 文件名（只当标题用）> 首行文字（由 captureText 兜底）
+        title: ownTitle || (uploadKind === "html" ? titleFromFilename(file.name) : undefined) || undefined,
         text,
         tags,
       });

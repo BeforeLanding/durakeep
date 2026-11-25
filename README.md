@@ -68,16 +68,18 @@ P0–P3 已完成。
 
 ## 自用部署
 
-安装依赖后，先在服务停止时创建账户，再构建前端：
+安装依赖后构建前端，在运行账号的环境中设置 `DEEPSEEK_API_KEY`，然后启动服务：
 
 ```bash
-pnpm cli init --timezone=Asia/Shanghai
 pnpm web:build
+pnpm dev
 ```
 
-在运行账号的环境中设置 `DEEPSEEK_API_KEY`，启动 `pnpm dev`，在 [本机界面](http://127.0.0.1:4777) 使用初始化时设置的口令登录。默认模型是 `deepseek-flash`，可在设置页调整。服务默认仅监听 `127.0.0.1:4777`。默认数据目录是 `data/`。如用 `DATA_DIR` 指定其他目录，请让初始化、服务与离线 CLI 使用同一目录。长期运行可使用 Windows 任务计划程序或 Linux systemd，配置见[运维手册](docs/runbook.md)。
+首次启动时终端会打印一个 8 位设置码。打开 [本机界面](http://127.0.0.1:4777)，输入设置码、称呼和口令即可完成设置并自动登录；之后用这个口令登录，可选择“保持登录”。口令、称呼与登录设备可在设置页管理。也可以在服务停止时用 `pnpm cli init --timezone=Asia/Shanghai` 创建账户。默认模型是 `deepseek-flash`，可在设置页调整。服务默认仅监听 `127.0.0.1:4777`。默认数据目录是 `data/`。如用 `DATA_DIR` 指定其他目录，请让初始化、服务与离线 CLI 使用同一目录。长期运行可使用 Windows 任务计划程序或 Linux systemd，配置见[运维手册](docs/runbook.md)。
 
 ## 数据传输、持久性与删除
+
+**导入飞书文档。** 飞书文档需要登录才能查看，直接贴链接无法抓取。在飞书开放平台创建企业自建应用，开通 `docx:document:readonly` 与 `wiki:wiki:readonly` 权限并发布版本，然后在服务账号的环境中设置 `FEISHU_APP_ID` 与 `FEISHU_APP_SECRET`；在要导入的文档右上角「…」→「添加文档应用」里加入这个应用，之后粘贴文档或知识库链接即可导入。不想配置时，可在飞书里导出为 Word，再在资料页上传 `.docx`。
 
 如需在飞书或 Lark 群接收提醒，可在服务账号的环境中设置 `FEISHU_WEBHOOK_URL`，开启机器人签名时再设置 `FEISHU_WEBHOOK_SECRET`。启用后，提醒标题、计划时间和迟到标记会发到该群。若任务页显示「待核对」，先查看群消息，再标记已送达、重发或放弃。[飞书配置与核对流程](docs/runbook.md#飞书外部提醒)
 

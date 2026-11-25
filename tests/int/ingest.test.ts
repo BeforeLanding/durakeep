@@ -435,3 +435,75 @@ test("采集限流：每分钟 20 次，超出 429", async () => {
   expect(codes.slice(0, 20).every((c) => c === 202)).toBe(true);
   expect(codes[20]).toBe(429);
 });
+
+test("上传 Word / HTML / GBK 文本：转成 Markdown 正文后可用；Word 标题取文件名", async () => {
+  const { makeZip } = await import("../../packages/knowledge/src/testing/zip.ts");
+  const send = (file: File) => {
+    const f = new FormData();
+    f.set("file", file);
+    f.set("client_request_id", crid());
+    return h.app.request("/v1/documents", { method: "POST", headers: { Cookie: cookie, Origin: ORIGIN }, body: f });
+  };
+  const docx = makeZip({ "word/document.xml": `<w:document><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>复习计划</w:t></w:r></w:p><w:p><w:r><w:t>${para}</w:t></w:r></w:p></w:body></w:document>` });
+  const a = await json(await send(new File([docx], "飞书导出的周报.docx")));
+  const html = await json(await send(new File([article("网页存档")], "saved.html")));
+  const gbk = await json(await send(new File([new Uint8Array([0xc4, 0xe3, 0xba, 0xc3, 0xca, 0xc0, 0xbd, 0xe7])], "gbk.txt"))); // “你好世界”
+  await done();
+  const da = await detail(a.document_id as string);
+  expect(da).toMatchObject({ status: "ready", title: "飞书导出的周报", source_type: "markdown" });
+  const text = await (await call("GET", `/v1/documents/${a.document_id}/versions/${(da.versions as J[])[0]!.id}/text`)).text();
+  expect(text).toContain("# 复习计划");
+  expect(await detail(html.document_id as string)).toMatchObject({ status: "ready", title: "网页存档" });
+  const dg = await detail(gbk.document_id as string);
+  expect(dg.status).toBe("ready");
+  const gt = await (await call("GET", `/v1/documents/${gbk.document_id}/versions/${(dg.versions as J[])[0]!.id}/text`)).text();
+  expect(gt).toContain("你好世界");
+});
+
+test("飞书链接：未配置应用凭据 → 提交时就返回 422 login_required，不建资料；腾讯文档同理", async () => {
+  const r = await captureUrl("https://abc.feishu.cn/docx/Doc123?from=from_copylink");
+  expect(r.status).toBe(422);
+  const e = (await json(r)).error as J;
+  expect(e.code).toBe("login_required");
+  expect(e.message).toContain("FEISHU_APP_ID");
+  expect(((await json(await captureUrl("https://docs.qq.com/doc/DQ1"))).error as J).code).toBe("login_required");
+  expect(((await json(await call("GET", "/v1/documents"))).items as J[])).toHaveLength(0);
+  expect(fetchLog).toEqual([]);
+});
+
+test("飞书链接：配置后经开放平台读取并转成 Markdown；页面被重定向到登录页 → failed login_required", async () => {
+  const { FeishuDocsClient } = await import("../../packages/knowledge/src/index.ts");
+  const fake = async (url: string) => {
+    const path = new URL(url).pathname;
+    const body = path.endsWith("/tenant_access_token/internal")
+      ? { code: 0, tenant_access_token: "t", expire: 7200 }
+      : path.includes("/blocks")
+        ? { code: 0, data: { has_more: false, items: [
+          { block_id: "p", block_type: 1, children: ["t"], page: { elements: [{ text_run: { content: "飞书周报" } }] } },
+          { block_id: "t", block_type: 2, text: { elements: [{ text_run: { content: para } }] } },
+        ] } }
+        : { code: 1770002, msg: "not found" };
+    return new Response(JSON.stringify(body));
+  };
+  await worker.stop();
+  knowledge = new KnowledgeService({ db, blobs: new BlobStore(join(dataDir, "blobs")), clock, fetchPolicy: policy, wake: () => worker.wake(), feishu: new FeishuDocsClient({ appId: "a", appSecret: "s" }, { fetch: fake }) });
+  worker = new JobWorker(db, clock, knowledge.handlers(), { onFinished: (j) => knowledge.onJobFinished(j), backoffMs: () => 30_000 });
+  worker.start();
+  h = createApp({ db, clock, origin: ORIGIN, knowledge, wakeJobs: () => worker.wake(), limits: { login: 10_000 } });
+
+  const r = await json(await captureUrl("https://abc.feishu.cn/docx/Doc123"));
+  await done();
+  const d = await detail(r.document_id as string);
+  expect(d).toMatchObject({ status: "ready", title: "飞书周报", source_type: "url" });
+  const text = await (await call("GET", `/v1/documents/${r.document_id}/versions/${(d.versions as J[])[0]!.id}/text`)).text();
+  expect(text).toContain("间隔重复");
+
+  const port = await site((req, res) => {
+    if (req.url === "/robots.txt") return res.writeHead(404).end();
+    if (req.url?.startsWith("/login")) return res.writeHead(200, { "content-type": "text/html" }).end(article("请登录"));
+    res.writeHead(302, { location: "/login?next=/doc" }).end();
+  });
+  const w = await json(await captureUrl(`http://wall.test:${port}/doc`));
+  await done();
+  expect(await detail(w.document_id as string)).toMatchObject({ status: "failed", error_code: "login_required" });
+});

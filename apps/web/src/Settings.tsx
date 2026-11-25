@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, uuid } from "./api.ts";
+import { Account } from "./Account.tsx";
+import { api, uuid, type Me } from "./api.ts";
 import { fmtTime, useGlobalStream } from "./hooks.ts";
 
 type Preferences = { chat_model: string; monthly_budget_usd: number; timezone: string; backup_keep: number };
@@ -16,7 +17,7 @@ type Usage = {
 const usd = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "USD", maximumFractionDigits: 6 });
 const percent = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 1 });
 
-export function Settings({ timezone, onTimezone }: { timezone: string; onTimezone: (timezone: string) => void }) {
+export function Settings({ me, onMe, timezone, onTimezone }: { me: Me; onMe: (me: Me) => void; timezone: string; onTimezone: (timezone: string) => void }) {
   const [health, setHealth] = useState<Health>();
   const [usage, setUsage] = useState<Usage>();
   const [preferences, setPreferences] = useState<Preferences>();
@@ -63,6 +64,8 @@ export function Settings({ timezone, onTimezone }: { timezone: string; onTimezon
       {error ? <p role="alert" className="error">{error}</p> : null}
       {feedback ? <p role="status" className="ok">{feedback}</p> : null}
 
+      <Account me={me} onMe={onMe} />
+
       {health?.delivery_paused ? (
         <div className="banner ops-pause" role="status">
           <strong>提醒投递已暂停。核对恢复数据后再恢复投递。</strong>
@@ -88,6 +91,7 @@ export function Settings({ timezone, onTimezone }: { timezone: string; onTimezon
             <div><dt>提醒投递</dt><dd>{health.delivery_paused ? "暂停" : "正常"}</dd></div>
             <div><dt>孤儿后台会话</dt><dd>{health.orphaned_background_conversations}</dd></div>
             <div><dt>飞书机器人</dt><dd>{health.feishu_configured ? "已配置" : "未配置"}</dd></div>
+            <div><dt>飞书文档导入</dt><dd title="FEISHU_APP_ID / FEISHU_APP_SECRET">{me.capabilities?.feishu_docs ? "已配置" : "未配置"}</dd></div>
             <div><dt>飞书待发送</dt><dd>{health.outbox_pending}</dd></div>
             <div><dt>飞书待核对</dt><dd><a href="#/jobs">{health.outbox_needs_review}</a></dd></div>
           </dl>
