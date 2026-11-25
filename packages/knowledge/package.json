@@ -11,6 +11,7 @@
     "@durakeep/jobs": "workspace:*",
     "@mozilla/readability": "0.6.0",
     "linkedom": "0.18.15",
+    "pdfjs-dist": "6.5.438",
     "turndown": "7.2.5"
   },
   "devDependencies": {

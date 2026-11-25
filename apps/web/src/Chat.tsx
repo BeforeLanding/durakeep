@@ -54,11 +54,14 @@ function groupOf(ms: number): string {
 }
 
 export function Chat({ convId, budgetWarning, me }: { convId: string | undefined; budgetWarning: string | null; me: Me }) {
-  const [convs, setConvs] = useState<Conv[]>([]);
+  const [all, setAll] = useState<Conv[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   const toast = useToast();
   const loadConvs = useCallback(() => {
-    api<{ items: Conv[] }>("GET", "/v1/conversations").then((r) => setConvs(r.items.filter((c) => !c.archived)), () => {});
+    api<{ items: Conv[] }>("GET", "/v1/conversations?archived=1&limit=100").then((r) => setAll(r.items), () => {});
   }, []);
+  const convs = all.filter((c) => !c.archived);
+  const archived = all.filter((c) => c.archived);
   useEffect(loadConvs, [loadConvs, convId]);
   const create = () =>
     api<Conv>("POST", "/v1/conversations", {}).then((c) => {
@@ -97,15 +100,80 @@ export function Chat({ convId, budgetWarning, me }: { convId: string | undefined
             </div>
           );
         })}
+        {archived.length > 0 && (
+          <>
+            <div style={{ flex: 1, minHeight: 12 }} />
+            <button className="ghost sm" style={{ justifyContent: "flex-start" }} aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>
+              <Icon name="file" />已归档 · {archived.length}
+            </button>
+            {showArchived && archived.map((c) => (
+              <a key={c.id} href={`#/chat/${c.id}`} className={`archived ${c.id === convId ? "on" : ""}`} title={c.title || "（未命名）"}>
+                <span>{c.title || "（未命名）"}</span>
+              </a>
+            ))}
+          </>
+        )}
       </aside>
       <section className="conv">
         {convId ? (
-          <ConversationView key={convId} id={convId} onActivity={loadConvs} budgetWarning={budgetWarning} />
+          <>
+            <ConvHeader conv={all.find((c) => c.id === convId)} onChanged={loadConvs} />
+            <ConversationView key={convId} id={convId} onActivity={loadConvs} budgetWarning={budgetWarning} archived={all.find((c) => c.id === convId)?.archived ?? false} />
+          </>
         ) : (
           <Welcome name={me.display_name} onSend={startWith} budgetWarning={budgetWarning} />
         )}
       </section>
     </div>
+  );
+}
+
+/** 对话标题栏：点击标题改名（Enter 保存、Esc 取消），归档 / 取消归档。 */
+function ConvHeader({ conv, onChanged }: { conv: Conv | undefined; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState("");
+  const toast = useToast();
+  if (!conv) return <header className="conv-head" />;
+  const save = () => {
+    const t = title.trim();
+    setEditing(false);
+    if (t === "" || t === conv.title) return;
+    api("PATCH", `/v1/conversations/${conv.id}`, { title: t }).then(onChanged, (e: Error) => toast(e.message, false));
+  };
+  const toggleArchive = () =>
+    api("PATCH", `/v1/conversations/${conv.id}`, { archived: !conv.archived }).then(() => {
+      onChanged();
+      if (!conv.archived) {
+        toast("已归档：可在左侧底部“已归档”里找回");
+        location.hash = "#/chat";
+      } else toast("已取消归档");
+    }, (e: Error) => toast(e.message, false));
+  return (
+    <header className="conv-head">
+      {editing ? (
+        <input
+          autoFocus
+          className="conv-title-input"
+          value={title}
+          maxLength={120}
+          aria-label="对话标题"
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) save();
+            if (e.key === "Escape") setEditing(false);
+          }}
+        />
+      ) : (
+        <button className="ghost conv-title" title="点击改名" onClick={() => { setTitle(conv.title); setEditing(true); }}>
+          <span>{conv.title || "（未命名）"}</span>
+          <svg className="i edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+        </button>
+      )}
+      {conv.archived && <span className="tag">已归档</span>}
+      <span className="grow" />
+      <button className="ghost sm" onClick={() => void toggleArchive()}>{conv.archived ? "取消归档" : "归档"}</button>
+    </header>
   );
 }
 
@@ -248,7 +316,7 @@ function Composer({ draftKey, running, queued, budgetWarning, onSend, onAbort }:
   );
 }
 
-function ConversationView({ id, onActivity, budgetWarning }: { id: string; onActivity: () => void; budgetWarning: string | null }) {
+function ConversationView({ id, onActivity, budgetWarning, archived }: { id: string; onActivity: () => void; budgetWarning: string | null; archived: boolean }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [live, setLive] = useState<Live>({ running: false, tools: [], queued: 0 });
   const [hasEarlier, setHasEarlier] = useState(false);
@@ -327,7 +395,9 @@ function ConversationView({ id, onActivity, budgetWarning }: { id: string; onAct
         )}
         <div ref={endRef} />
       </div>
-      <Composer draftKey={id} running={live.running} queued={live.queued} budgetWarning={budgetWarning} onSend={send} onAbort={() => void act("abort")} />
+      {archived ? (
+        <div className="composer-wrap"><div className="notice"><Icon name="info" />这个对话已归档，只能查看。点右上角“取消归档”后可以继续对话。</div></div>
+      ) : <Composer draftKey={id} running={live.running} queued={live.queued} budgetWarning={budgetWarning} onSend={send} onAbort={() => void act("abort")} />}
     </>
   );
 }

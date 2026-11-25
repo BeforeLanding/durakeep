@@ -315,3 +315,12 @@
 - **CI。** GitHub Actions 提示 Node.js 20 弃用：`actions/checkout` v4→v7、`actions/setup-node` v4→v7、`pnpm/action-setup` v4→v6（三者均已改用 node24 运行；查看过 v5–v7 的发布说明，`cache: pnpm` 与 pnpm 11 均受支持）。
 - **测试。** 新增 `tests/int/search-refresh.test.ts`（3）。`pnpm test` 58 文件 298 用例通过；`pnpm test:recovery` 10 文件 18 用例通过（上一条记录里未运行的这一项也一并补上）；`pnpm lint` 通过；`pnpm test:e2e` 通过。手动（demo，内置浏览器）：搜索“水温”“复习”显示带高亮的摘录；草稿在切换页面后保留。重新抓取按钮只在网页资料上出现，demo 里没有网页资料，只靠集成测试覆盖。零付费模型调用。
 
+## 2026-11-25 PDF 导入与对话管理
+
+- **新依赖（用户当场批准，精确锁定）：** `pdfjs-dist@6.5.438`（Mozilla PDF.js，Apache-2.0，只在 `packages/knowledge`）。选它而不是体积小的 `unpdf`，是因为后者不带 CJK CMap：实测不嵌入字体的中文 PDF（UniGB-UCS2-H 编码）不给 CMap 时抽出来是空串。它的可选原生依赖 `@napi-rs/canvas`（渲染用，我们不需要）在 `pnpm-workspace.yaml` 用 `ignoredOptionalDependencies` 排除，锁文件里只有 pdfjs-dist 一项；没有安装脚本。
+- **PDF → Markdown（`packages/knowledge/src/pdf.ts`）。** legacy 构建、关闭 eval 与字体加载；`cMapUrl` 在 Node 下必须是文件系统路径（传 file:// URL 时同样抽不出中文）。按字号识别标题（≥ 正文 1.2 倍的短行，最多三级），按标点与中英文规则把折行拼回段落，识别列表项，去掉页码行和在 ≥60% 页面重复出现的页眉页脚；文档信息里有像样的 Title 时用作标题。密码保护、损坏、没有文字层（扫描件）都给出可读的 `extract_failed`，PDF.js 的其他异常也归为 `extract_failed`（不重试）。上传 `.pdf` ≤20 MB；网页抓取接受 `application/pdf`，下载上限由 5 MB 放宽到 20 MB（02 / 03 / 07 同步修改）。
+- **踩到的坑。** 作业里取出的是 Node `Buffer`，`Buffer.slice()` 只是视图；把它交给 PDF.js 会连同共享内存池一起转移，抛出非业务异常而被当作 `internal` 重试。改为 `new Uint8Array(bytes)` 复制。
+- **对话管理。** 对话页加标题栏：点标题改名（Enter 保存、Esc 取消），归档 / 取消归档；侧栏底部“已归档”分组可展开找回。`GET /v1/conversations` 新增 `archived=1`（服务层早已支持，接口没暴露）；侧栏一次取 100 条（原来默认 20 条，更早的对话会从侧栏消失）。已归档对话只读，输入框换成提示。
+- **小修。** `md.tsx` 嵌套列表前缀误写成了不换行空格（上一次提交引入），已改回普通空格；扫描了本轮改过的所有源文件，没有其他不可见字符（`ingest.test.ts` 里的 BOM 是有意的测试数据）。
+- **测试。** 新增 `pdf.test.ts`（3：需要 CMap 的中文 PDF、无文字层 / 非 PDF / 损坏、行拼段规则）、`ingest.test.ts` 新增 PDF 上传与 PDF 链接端到端用例；原先断言“PDF 不支持”的 3 处改为新行为（不支持类型改用图片 / pptx 验证，损坏 PDF 为 `extract_failed`），`safe-fetch` 的大小上限用例改为 20 MB；`conversations.test.ts` 补 `archived=1`。`pnpm test` 59 文件 302 用例通过，`pnpm lint` 通过；`pnpm test:recovery` 18、`pnpm test:upgrade` 20 用例通过，`pnpm test:e2e` 通过。手动（demo）：经页面会话上传中文 PDF → 可用；对话改名、归档后只读与“已归档”分组。零付费模型调用。
+

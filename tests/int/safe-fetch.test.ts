@@ -129,11 +129,11 @@ test("S8 补充：连接用的是固定的 IP，而不是系统再次解析的�
   expect(r.status).toBe(200);
 });
 
-test("S9：响应体超过 5 MB（流式计数）立即中断；声明的 Content-Length 超限直接拒绝", async () => {
+test("S9：响应体超过 20 MB（流式计数）立即中断；声明的 Content-Length 超限直接拒绝", async () => {
   let streamed = 0;
   let aborted = false;
   const big = await serve((req, res) => {
-    if (req.url === "/declared") { res.writeHead(200, { "content-type": "text/plain", "content-length": String(6 * 1024 * 1024) }); return res.end(); }
+    if (req.url === "/declared") { res.writeHead(200, { "content-type": "text/plain", "content-length": String(21 * 1024 * 1024) }); return res.end(); }
     res.writeHead(200, { "content-type": "text/plain" }); // chunked，不声明长度
     const chunk = Buffer.alloc(256 * 1024, 97);
     res.on("close", () => { aborted = true; });
@@ -145,13 +145,13 @@ test("S9：响应体超过 5 MB（流式计数）立即中断；声明的 Conten
     };
     tick();
   });
-  expect(DEFAULT_POLICY.maxBytes).toBe(5 * 1024 * 1024);
+  expect(DEFAULT_POLICY.maxBytes).toBe(20 * 1024 * 1024);
   expect(await code(safeFetch(`${big.base}/stream`, policy()))).toBe("too_large");
   await new Promise((r) => setTimeout(r, 100));
   expect(aborted).toBe(true);
-  expect(streamed).toBeLessThan(16 * 1024 * 1024); // 远没有把 40 MB 读完
+  expect(streamed).toBeLessThan(30 * 1024 * 1024); // 远没有把 40 MB 读完
   expect(await code(safeFetch(`${big.base}/declared`, policy()))).toBe("too_large");
-  // 5 MB 以内正常
+  // 上限以内正常
   const ok = await serve((_req, res) => { res.writeHead(200, { "content-type": "text/plain" }); res.end(Buffer.alloc(1024 * 1024, 98)); });
   expect((await safeFetch(ok.base, policy())).bytes.length).toBe(1024 * 1024);
 });
@@ -200,6 +200,7 @@ test("S9：重定向最多 5 次（第 6 次失败且不可重试）；总时长
 test("内容类型白名单；HTTP 状态的可重试判定；连接失败可重试", async () => {
   const s = await serve((req, res) => {
     const u = req.url ?? "";
+    if (u === "/png") { res.writeHead(200, { "content-type": "image/png" }); return res.end("png"); }
     if (u === "/pdf") { res.writeHead(200, { "content-type": "application/pdf" }); return res.end("%PDF"); }
     if (u === "/none") { res.writeHead(200); return res.end("hi"); }
     if (u === "/md") { res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" }); return res.end("# t"); }
@@ -208,7 +209,8 @@ test("内容类型白名单；HTTP 状态的可重试判定；连接失败可重
     res.writeHead(status, { "content-type": "text/html" });
     res.end("x");
   });
-  expect(await code(safeFetch(`${s.base}/pdf`, policy()))).toBe("unsupported_type");
+  expect(await code(safeFetch(`${s.base}/png`, policy()))).toBe("unsupported_type");
+  expect((await safeFetch(`${s.base}/pdf`, policy())).status).toBe(200); // PDF 在白名单里，由抽取阶段处理
   expect(await code(safeFetch(`${s.base}/none`, policy()))).toBe("unsupported_type");
   expect((await safeFetch(`${s.base}/md`, policy())).status).toBe(200);
   expect((await safeFetch(`${s.base}/xhtml`, policy())).status).toBe(200);

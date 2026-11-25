@@ -3,6 +3,7 @@ export { readPurgeLog, replayPurgeLog, type PurgeLog } from "./purge.ts";
 export { decodeBody, detectCharset } from "./charset.ts";
 export { extractHtml, extractPlain, normalizeText } from "./extract.ts";
 export { docxToMarkdown, readZipEntry } from "./docx.ts";
+export { linesToMarkdown, MAX_PDF_PAGES, pdfToMarkdown } from "./pdf.ts";
 export { assertRobotsAllows, safeFetch, DEFAULT_POLICY, USER_AGENT, type FetchPolicy } from "./fetch.ts";
 export { isPublicIp } from "./ssrf.ts";
 export { normalizeUrl, urlHash } from "./url.ts";

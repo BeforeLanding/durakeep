@@ -10,7 +10,7 @@ const ERROR_HINT: Record<string, string> = {
   login_required: "这个页面需要登录才能查看，无法直接抓取。可以复制正文粘贴，或导出文件后上传。",
   permission_denied: "没有读取权限。飞书文档需要把你的应用添加为文档协作者。",
   robots_disallowed: "该网站不允许程序抓取这个页面。可以复制正文粘贴进来。",
-  unsupported_type: "不支持的内容类型（例如 PDF 或图片链接）。",
+  unsupported_type: "不支持的内容类型（例如图片、视频或压缩包链接）。",
   too_large: "内容太大，超过了大小上限。",
   ssrf_blocked: "出于安全考虑，不允许访问内网或本机地址。",
   fetch_failed: "无法访问这个网址，请检查链接是否能在浏览器中打开。",
@@ -20,7 +20,7 @@ const ERROR_HINT: Record<string, string> = {
 };
 
 const parseTags = (s: string) => [...new Set(s.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean))];
-const ACCEPT = ".docx,.md,.markdown,.txt,.html,.htm";
+const ACCEPT = ".pdf,.docx,.md,.markdown,.txt,.html,.htm";
 
 const isFeishu = (u: string) => /^https?:\/\/[^/]*(feishu\.cn|feishu\.net|larkoffice\.com|larksuite\.com)\//i.test(u.trim());
 const LOGIN_WALL: [RegExp, string][] = [
@@ -294,7 +294,7 @@ function Capture({ onDone, feishu }: { onDone: () => void; feishu: boolean }) {
               <>
                 <Icon name="upload" />
                 <b>拖拽文件到这里，或点击选择</b>
-                <div className="small">支持 Word（.docx，≤10 MB）、Markdown、TXT、HTML（≤2 MB）· 飞书 / 腾讯文档可先导出为 Word</div>
+                <div className="small">支持 PDF（≤20 MB，需有文字层）、Word（.docx，≤10 MB）、Markdown、TXT、HTML（≤2 MB）· 飞书 / 腾讯文档可先导出为 Word 或 PDF</div>
               </>
             ) : (
               <div className="stack" style={{ alignItems: "center" }}>

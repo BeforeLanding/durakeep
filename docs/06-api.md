@@ -59,7 +59,7 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/v1/conversations` | 列表（只包含 `kind=chat`），按 `last_active_at` 倒序 |
+| GET | `/v1/conversations?archived=0\|1&limit=&cursor=` | 列表（只包含 `kind=chat`），按 `last_active_at` 倒序；默认不含已归档，`archived=1` 时一并返回（前端据此显示“已归档”分组）。已归档的会话不能发送消息（404），取消归档后恢复 |
 | POST | `/v1/conversations` | `{ "title"?: string }`，返回 201 和会话对象 |
 | PATCH | `/v1/conversations/:id` | `{ "title"?, "archived"?: boolean }` |
 | GET | `/v1/conversations/:id/entries?before=<entry_id>&limit=50` | 加载更早的条目：`{ "entries": AppEntry[], "has_earlier": boolean }`。`before` 不含，缺省从最新开始；`limit` 1–100；条目按 ID 升序，只含可展示的类型 |
@@ -131,6 +131,8 @@ POST /v1/conversations/01J…/messages
 | GET | `/v1/chunks/:id` | 引用悬停时用：返回 `{ id, document_id, version_id, title, loc, char_start, char_end, text }`；校验 owner 和 `active`，不满足一律 404 |
 | GET | `/v1/search?q=&top_k=10` | 资料页全文搜索；与 `kb_search` 使用同一条检索链路（只含 active 片段）。`q` 1–200 字符，`top_k` 1–20。返回 `{ items: [{ chunk_id, document_id, title, source_type, loc, snippet }] }`，`snippet` 为去掉 Markdown 标记、以查询词为中心的约 160 字摘录 |
 | POST | `/v1/documents/:id/refresh` | 重新抓取网页 / 飞书资料：202 `{ job_id, created: true }`；已有排队或执行中的抓取作业时 200 返回它。内容有变化则产生新版本（旧版本保留），未变不改动；失败的资料改回 `pending`。文本资料 409 `invalid_state`，已停用 / 删除中的资料 409；与采集共用限流 |
+
+**上传类型。** multipart 上传按扩展名识别：`.pdf`（≤20 MB，PDF.js 抽取文字层，按字号识别标题；没有文字层的扫描件 `extract_failed`）、`.docx`（≤10 MB）、`.md` / `.markdown` / `.txt` / `.html` / `.htm`（≤2 MB；文本 UTF-8 失败时按 GB18030 解码）。网页抓取接受 `application/pdf`，下载上限 20 MB。
 
 **飞书 / Lark 文档与登录墙。** 飞书文档网页需要登录且由前端脚本渲染，直接抓取只会拿到登录页。识别为飞书链接（`*.feishu.cn`、`*.larkoffice.com`、`*.larksuite.com` 的 `/docx/`、`/docs/`、`/wiki/`）时：配置了 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（飞书自建应用，需开通 `docx:document:readonly`、`wiki:wiki:readonly`，并在文档中“添加文档应用”）则在作业里经开放平台读取文档块并转成 Markdown；未配置则 `POST /v1/documents` 直接返回 422 `login_required`，不建资料。表格、多维表格等返回 `unsupported_type`。腾讯文档、Notion、石墨、钉钉文档同样在提交时返回 `login_required`。其他网址若抓取被重定向到登录页（主机名以 accounts./passport./login./sso. 等开头，或路径含 /login、/signin 等），作业以 `login_required` 失败。应用无权读取文档时为 `permission_denied`。
 

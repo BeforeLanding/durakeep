@@ -11,7 +11,7 @@ import { isBlockedHostname, isPublicIp } from "./ssrf.ts";
 // HTTP 头只能是 Latin-1：07 §1.2 原写的中文说明会让 Node 直接抛 ERR_INVALID_CHAR，所以用纯 ASCII
 export const USER_AGENT = "PersonalAgent/0.1 (+personal local use)";
 const UA_TOKEN = "PersonalAgent";
-export const ACCEPT_TYPES = ["text/html", "text/plain", "text/markdown", "application/xhtml+xml"];
+export const ACCEPT_TYPES = ["text/html", "text/plain", "text/markdown", "application/xhtml+xml", "application/pdf", "application/x-pdf"];
 
 export type FetchPolicy = {
   /** 主机名 → IP 列表。每一跳只调用一次，调用之后连接固定在检查过的 IP 上（防 DNS 重绑定）。 */
@@ -28,7 +28,7 @@ export type FetchPolicy = {
 export const DEFAULT_POLICY: FetchPolicy = {
   resolve: async (host) => (await dnsLookup(host, { all: true, verbatim: true })).map((a) => a.address),
   isPublicIp,
-  maxBytes: 5 * 1024 * 1024,
+  maxBytes: 20 * 1024 * 1024, // PDF 常见数 MB；网页远小于此
   timeoutMs: 20_000,
   maxRedirects: 5,
   userAgent: USER_AGENT,

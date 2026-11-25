@@ -201,7 +201,8 @@ test("上传校验：只收 .md / .markdown / .txt；> 2 MB → 413；非 UTF-8 
     return h.app.request("/v1/documents", { method: "POST", headers: { Cookie: cookie, Origin: ORIGIN }, body: f });
   };
   expect((await send(new File(["x"], "a.exe"))).status).toBe(422);
-  expect(((await json(await send(new File(["x"], "a.pdf")))).error as J).code).toBe("unsupported_type");
+  expect(((await json(await send(new File(["x"], "a.pptx")))).error as J).code).toBe("unsupported_type");
+  expect(((await json(await send(new File(["x"], "fake.pdf")))).error as J).code).toBe("extract_failed"); // 扩展名是 .pdf 但内容不是 PDF
   expect((await send(new File([new Uint8Array(2 * 1024 * 1024 + 1).fill(97)], "big.txt"))).status).toBe(413);
   expect((await send(new File([new Uint8Array(4 * 1024 * 1024).fill(97)], "huge.txt"))).status).toBe(413); // 被请求体上限挡住
   expect((await send(new File([new Uint8Array([0xff, 0xfe, 0xfd])], "bad.txt"))).status).toBe(400);
@@ -289,24 +290,28 @@ test("版本：同一 URL 同一天再次采集 → 同一个作业（deduplicat
 test("失败路径：robots 不允许 / 不支持的类型 / 404 / SSRF 都立即 failed 不重试，资料标 failed 并带错误码；SSRF 目标从未被连接", async () => {
   const port = await site((req, res) => {
     if (req.url === "/robots.txt") { res.writeHead(200, { "content-type": "text/plain" }); return res.end("User-agent: *\nDisallow: /private\n"); }
-    if (req.url === "/pdf") { res.writeHead(200, { "content-type": "application/pdf" }); return res.end("%PDF"); }
+    if (req.url === "/png") { res.writeHead(200, { "content-type": "image/png" }); return res.end("PNG"); }
+    if (req.url === "/pdf") { res.writeHead(200, { "content-type": "application/pdf" }); return res.end("%PDF-1.4 broken"); }
     if (req.url === "/gone") { res.writeHead(404, { "content-type": "text/html" }); return res.end("nope"); }
     res.writeHead(200, { "content-type": "text/html" });
     res.end("<html/>");
   });
   const cases: [string, string, string][] = [
     [`http://f.test:${port}/private/doc`, "robots_disallowed", "robots"],
-    [`http://f.test:${port}/pdf`, "unsupported_type", "pdf"],
+    [`http://f.test:${port}/png`, "unsupported_type", "png"],
+    [`http://f.test:${port}/pdf`, "extract_failed", "损坏的 pdf"],
     [`http://f.test:${port}/gone`, "fetch_failed", "404"],
   ];
-  for (const [url, code] of cases) {
+  for (const [url, code, label] of cases) {
     const b = await json(await captureUrl(url));
     await done();
     const j = await json(await call("GET", `/v1/jobs/${b.job_id}`));
     expect([j.status, j.error_code, j.attempts], url).toEqual(["failed", code, 1]);
     const d = await detail(b.document_id as string);
     expect([d.status, d.error_code], url).toEqual(["failed", code]);
-    expect(d.versions).toEqual([]);
+    // 抓取阶段失败没有版本；抓到了但抽取失败（损坏的 PDF）留下原始版本记录，但没有可用版本
+    if (label === "损坏的 pdf") expect((d.versions as J[]).map((v) => v.status)).toEqual(["parsing"]);
+    else expect(d.versions).toEqual([]);
   }
   // SSRF：用默认（严格）策略——本机站点即使在监听也不会被连接
   await worker.stop(); // 同一个库上不能有两个 worker：否则主 worker（宽松策略）会抢走作业
@@ -506,4 +511,25 @@ test("飞书链接：配置后经开放平台读取并转成 Markdown；页面�
   const w = await json(await captureUrl(`http://wall.test:${port}/doc`));
   await done();
   expect(await detail(w.document_id as string)).toMatchObject({ status: "failed", error_code: "login_required" });
+});
+
+test("PDF：上传与网页链接都能导入中文 PDF（需要 CMap 的编码），标题取文件名 / PDF 里的大字号标题", async () => {
+  const { makePdf } = await import("../../packages/knowledge/src/testing/pdf.ts");
+  const pdf = makePdf([[{ text: "间隔重复", size: 20 }, { text: "在即将遗忘时复习，效果最好。" }]]);
+  const f = new FormData();
+  f.set("file", new File([pdf], "读书笔记.pdf", { type: "application/pdf" }));
+  f.set("client_request_id", crid());
+  const up = await json(await h.app.request("/v1/documents", { method: "POST", headers: { Cookie: cookie, Origin: ORIGIN }, body: f }));
+  const port = await site((req, res) => {
+    if (req.url === "/robots.txt") return res.writeHead(404).end();
+    res.writeHead(200, { "content-type": "application/pdf" }).end(Buffer.from(pdf));
+  });
+  const web = await json(await captureUrl(`http://pdf.test:${port}/paper.pdf`));
+  await done();
+  for (const [id, title] of [[up.document_id, "读书笔记"], [web.document_id, "间隔重复"]] as const) {
+    const d = await detail(id as string);
+    expect(d, String(title)).toMatchObject({ status: "ready", title });
+    const v = (d.versions as J[]).find((x) => x.current)!;
+    expect(await (await call("GET", `/v1/documents/${id}/versions/${v.id}/text`)).text()).toContain("在即将遗忘时复习");
+  }
 });

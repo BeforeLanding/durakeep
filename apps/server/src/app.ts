@@ -147,7 +147,7 @@ export function createApp(deps: AppDeps) {
     throw new AppError("too_large", "请求体过大");
   };
   const smallBody = bodyLimit({ maxSize: 1024 * 1024, onError: tooLarge });
-  const captureBody = bodyLimit({ maxSize: 11 * 1024 * 1024, onError: tooLarge }); // 文本 ≤2 MB、Word ≤10 MB（multipart 另有少量开销）
+  const captureBody = bodyLimit({ maxSize: 21 * 1024 * 1024, onError: tooLarge }); // 文本 ≤2 MB、Word ≤10 MB、PDF ≤20 MB（multipart 另有少量开销）
   app.use("*", (c, next) => (c.req.method === "POST" && c.req.path === "/v1/documents" ? captureBody(c, next) : smallBody(c, next)));
 
   // FR-AUTH-03 / S4：修改类请求检查来源
@@ -369,7 +369,9 @@ function mountConversationRoutes(
     if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > 100)) {
       throw new AppError("invalid_request", "limit 需为 1–100 的整数", { issues: [{ path: "limit" }] });
     }
-    const page = await conversations.list(c.get("owner").id, { limit: n, cursor: c.req.query("cursor") });
+    const archived = c.req.query("archived");
+    if (archived !== undefined && archived !== "0" && archived !== "1") throw new AppError("invalid_request", "archived 需为 0 或 1", { issues: [{ path: "archived" }] });
+    const page = await conversations.list(c.get("owner").id, { limit: n, cursor: c.req.query("cursor"), includeArchived: archived === "1" });
     return c.json({ items: page.items.map(present), next_cursor: page.nextCursor });
   });
 

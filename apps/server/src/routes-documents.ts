@@ -1,7 +1,7 @@
 import { AppError, type Clock } from "@durakeep/core";
 import type { SqlDatabase } from "@durakeep/db";
 import { cancelJob, getJob, listJobs, retryJob, type JobRow, type JobStatus } from "@durakeep/jobs";
-import { docxToMarkdown, extractHtml, MAX_UPLOAD_BYTES, type KnowledgeRetrieval, type DocumentRow, type KnowledgeService, type VersionRow } from "@durakeep/knowledge";
+import { docxToMarkdown, extractHtml, pdfToMarkdown, MAX_UPLOAD_BYTES, type KnowledgeRetrieval, type DocumentRow, type KnowledgeService, type VersionRow } from "@durakeep/knowledge";
 import type { Hono } from "hono";
 import type { AppEnv } from "./app.ts";
 import { parseLimit, readJson } from "./http.ts";
@@ -44,12 +44,20 @@ export const presentJob = (j: JobRow) => ({
 });
 
 const JOB_STATUSES = new Set<JobStatus>(["queued", "running", "succeeded", "failed", "cancelled"]);
-type UploadKind = "markdown" | "text" | "html" | "docx";
+type UploadKind = "markdown" | "text" | "html" | "docx" | "pdf";
 const UPLOAD_EXT: Record<string, UploadKind> = {
-  ".md": "markdown", ".markdown": "markdown", ".txt": "text", ".html": "html", ".htm": "html", ".docx": "docx",
+  ".md": "markdown", ".markdown": "markdown", ".txt": "text", ".html": "html", ".htm": "html", ".docx": "docx", ".pdf": "pdf",
 };
-/** Word 文件常带图片，体积大但文字少，单独放宽到 10 MB；文本类仍是 2 MB。 */
+/** Word 文件常带图片，体积大但文字少，单独放宽到 10 MB；PDF 20 MB；文本类仍是 2 MB。 */
 export const MAX_DOCX_BYTES = 10 * 1024 * 1024;
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+const LIMIT: Record<UploadKind, [number, string]> = {
+  docx: [MAX_DOCX_BYTES, "Word 文件不能超过 10 MB"],
+  pdf: [MAX_PDF_BYTES, "PDF 文件不能超过 20 MB"],
+  markdown: [MAX_UPLOAD_BYTES, "文件不能超过 2 MB"],
+  text: [MAX_UPLOAD_BYTES, "文件不能超过 2 MB"],
+  html: [MAX_UPLOAD_BYTES, "文件不能超过 2 MB"],
+};
 
 /** 文本文件：先按 UTF-8 严格解码，失败再按 GB18030（Windows 下常见的 GBK 文本）解码。 */
 function decodeTextFile(bytes: Uint8Array): string {
@@ -108,15 +116,17 @@ export function mountDocumentRoutes(
       if (!(file instanceof File)) throw new AppError("invalid_request", "缺少 file 字段", { issues: [{ path: "file" }] });
       const ext = /\.[^./\\]+$/.exec(file.name)?.[0]?.toLowerCase() ?? "";
       const uploadKind = UPLOAD_EXT[ext];
-      if (!uploadKind) throw new AppError("unsupported_type", "支持 Word（.docx）、Markdown、纯文本和网页（.html）文件");
-      if (uploadKind === "docx" ? file.size > MAX_DOCX_BYTES : file.size > MAX_UPLOAD_BYTES) {
-        throw new AppError("too_large", uploadKind === "docx" ? "Word 文件不能超过 10 MB" : "文件不能超过 2 MB");
-      }
+      if (!uploadKind) throw new AppError("unsupported_type", "支持 PDF、Word（.docx）、Markdown、纯文本和网页（.html）文件");
+      if (file.size > LIMIT[uploadKind][0]) throw new AppError("too_large", LIMIT[uploadKind][1]);
       const bytes = new Uint8Array(await file.arrayBuffer());
       let text: string;
       let kind: "markdown" | "text" = uploadKind === "text" ? "text" : "markdown";
       let ownTitle: string | undefined;
-      if (uploadKind === "docx") {
+      if (uploadKind === "pdf") {
+        const md = await pdfToMarkdown(bytes);
+        text = md.markdown;
+        ownTitle = titleFromFilename(file.name) || md.title;
+      } else if (uploadKind === "docx") {
         const md = docxToMarkdown(bytes);
         text = md.markdown;
         ownTitle = titleFromFilename(file.name) || md.title; // Word：文件名通常就是文档标题（飞书导出亦然）

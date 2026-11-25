@@ -88,7 +88,7 @@ export function Markdown({ text, token }: { text: string; token?: Inline }) {
       const items: string[] = [];
       while (i < lines.length) {
         const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]!);
-        if (m && /\d/.test(m[2]!) === ordered) items.push((m[1]!.length >= 2 ? "  " : "") + m[3]!);
+        if (m && /\d/.test(m[2]!) === ordered) items.push((m[1]!.length >= 2 ? "  " : "") + m[3]!);
         else if (lines[i]!.trim() !== "" && /^\s{2,}/.test(lines[i]!) && items.length) items[items.length - 1] += " " + lines[i]!.trim();
         else break;
         i++;

@@ -9,3 +9,7 @@ savePrefix: ""
 allowBuilds:
   "@google/genai": false
   protobufjs: false
+
+# pdfjs-dist 只用来抽取文字，不渲染页面：不安装它的可选原生依赖（预编译画布库）
+ignoredOptionalDependencies:
+  - "@napi-rs/canvas"

@@ -23,6 +23,7 @@ import { setActiveChunks } from "./indexer.ts";
 import { CHUNKER_VERSION } from "./chunker.ts";
 import { assertRobotsAllows, safeFetch, type FetchPolicy } from "./fetch.ts";
 import { normalizeUrl, urlHash } from "./url.ts";
+import { pdfToMarkdown } from "./pdf.ts";
 import { loginWallFor, looksLikeLoginPage, parseFeishuUrl, type FeishuDocsClient } from "./feishu.ts";
 
 export const MAX_TEXT_CHARS = 500_000; // 07 / 03 §7：正文 ≤500k 字符
@@ -463,7 +464,7 @@ export class KnowledgeService {
       let textHash = version.textBlob ?? undefined;
       if (version.status === "parsing" || !textHash) {
         const bytes = this.#d.blobs.get(version.rawBlob);
-        ex = this.#extract(doc, bytes, contentType);
+        ex = await this.#extract(doc, bytes, contentType);
         textHash = this.#d.blobs.put(ex.markdown);
         await this.#d.db.run(
           "UPDATE app_document_versions SET text_blob = ?, parser_version = ?, title = ?, char_count = ?, status = 'indexing' WHERE owner_id = ? AND id = ? AND status = 'parsing'",
@@ -496,10 +497,14 @@ export class KnowledgeService {
     }
   }
 
-  #extract(doc: DocumentRow, bytes: Uint8Array, contentType: string | undefined): Extracted {
+  async #extract(doc: DocumentRow, bytes: Uint8Array, contentType: string | undefined): Promise<Extracted> {
+    const media = contentType?.split(";")[0]?.trim().toLowerCase() ?? "text/html";
+    if (doc.sourceType === "url" && (media === "application/pdf" || media === "application/x-pdf")) {
+      const pdf = await pdfToMarkdown(bytes); // 自带面向用户的 extract_failed 信息，不要被下面的通用信息覆盖
+      return extractPlain(pdf.title && !/^#\s/m.test(pdf.markdown) ? `# ${pdf.title}\n\n${pdf.markdown}` : pdf.markdown, "markdown");
+    }
     try {
       if (doc.sourceType === "url") {
-        const media = contentType?.split(";")[0]?.trim().toLowerCase() ?? "text/html";
         const { text } = decodeBody(bytes, contentType);
         if (media === "text/markdown") return extractPlain(text, "markdown");
         // 有些站点把 Markdown 以 text/plain 返回（带 front matter）：按 Markdown 处理，才能取到标题并剥掉 front matter

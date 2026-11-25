@@ -109,6 +109,9 @@ test("会话 CRUD：创建 201、列表按最近活动倒序、分页、重命�
   const archived = await json(await call("PATCH", `/v1/conversations/${b}`, { archived: true }));
   expect(archived.archived).toBe(true);
   expect(((await json(await call("GET", "/v1/conversations"))).items as J[]).map((x) => x.id)).not.toContain(b);
+  const withArchived = (await json(await call("GET", "/v1/conversations?archived=1"))).items as J[];
+  expect(withArchived.find((x) => x.id === b)).toMatchObject({ archived: true });
+  expect((await call("GET", "/v1/conversations?archived=yes")).status).toBe(400);
   expect((await send(b, "还能发吗")).status).toBe(404);
   const restored = await json(await call("PATCH", `/v1/conversations/${b}`, { archived: false }));
   expect(restored.archived).toBe(false);

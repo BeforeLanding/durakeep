@@ -297,6 +297,13 @@ button.sm svg.i { width: 15px; height: 15px; }
 .side a:hover { background: var(--bg-2); text-decoration: none; }
 .side a.on { background: var(--acc-soft); color: var(--acc-ink); font-weight: 500; }
 .side .group { font-size: 11.5px; color: var(--muted); padding: 12px 10px 4px; font-weight: 600; letter-spacing: .02em; }
+.conv-head { display: flex; align-items: center; gap: 8px; padding: 10px max(24px, calc((100% - 780px) / 2)); border-bottom: 1px solid var(--line); min-height: 52px; background: var(--bg); }
+.conv-title { font-weight: 600; font-size: 15px; padding: 5px 8px; max-width: 70%; }
+.conv-title span { overflow: hidden; text-overflow: ellipsis; }
+.conv-title .edit { width: 14px; height: 14px; opacity: 0; transition: opacity .15s; }
+.conv-title:hover .edit { opacity: .6; }
+.conv-title-input { font-weight: 600; font-size: 15px; flex: 1; max-width: 520px; }
+.side a.archived { color: var(--muted); }
 .conv { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .msgs { flex: 1; overflow: auto; padding: 28px max(24px, calc((100% - 780px) / 2)); display: flex; flex-direction: column; gap: 18px; }
 .turn { display: flex; gap: 12px; align-items: flex-start; animation: rise .2s ease-out; }

@@ -79,7 +79,9 @@ On first start the terminal prints an 8-character setup code. Open the [local UI
 
 ## Data transfer, durability, and deletion
 
-**Importing Feishu docs.** Feishu documents require sign-in, so pasting a link cannot fetch them directly. Create a custom app on the Feishu Open Platform with `docx:document:readonly` and `wiki:wiki:readonly`, publish it, and set `FEISHU_APP_ID` and `FEISHU_APP_SECRET` in the service account's environment. Add the app to each document via "…" → "Add document app"; then paste the doc or wiki link to import it. Alternatively, export the doc as Word and upload the `.docx` on the Library page.
+**Importing Feishu docs.** Feishu documents require sign-in, so pasting a link cannot fetch them directly. Create a custom app on the Feishu Open Platform with `docx:document:readonly` and `wiki:wiki:readonly`, publish it, and set `FEISHU_APP_ID` and `FEISHU_APP_SECRET` in the service account's environment. Add the app to each document via "…" → "Add document app"; then paste the doc or wiki link to import it. Alternatively, export the doc as Word or PDF and upload it on the Library page.
+
+**Supported sources.** Web links (including links to PDFs), Feishu docs, pasted text, and uploads of PDF (≤20 MB, must have a text layer; scanned PDFs need OCR, which is not supported yet), Word `.docx` (≤10 MB), and Markdown / TXT / HTML (≤2 MB). Web and Feishu documents can be re-fetched from the detail page; changed content becomes a new version.
 
 To receive reminders in a Feishu or Lark group, set `FEISHU_WEBHOOK_URL` in the service account's environment. Set `FEISHU_WEBHOOK_SECRET` if the bot requires signatures. Once enabled, reminder titles, scheduled times, and late-delivery indicators are sent to the group. If the Jobs page marks a delivery as needing review, check the group before marking it delivered, retrying, or abandoning it. [Feishu setup and review procedure](docs/runbook.md#飞书外部提醒)
 
