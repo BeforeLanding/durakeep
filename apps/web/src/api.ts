@@ -70,6 +70,8 @@ export type Doc = {
   id: string;
   source_type: string;
   source_uri: string | null;
+  /** 上传或链接的原始格式（pdf / docx / html）；null 表示与 source_type 一致。 */
+  source_format?: "pdf" | "docx" | "html" | null;
   title: string;
   status: string;
   tags: string[];

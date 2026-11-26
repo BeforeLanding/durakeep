@@ -38,7 +38,7 @@ Hover over `[1]` in the answer to read the original passage.
 <details>
 <summary>More: settings and health page</summary>
 
-![Settings and health page with service metrics, backup, monthly usage, and preferences](docs/assets/settings-health.png)
+![Settings and health page: profile, password change, signed-in devices, and service status (monthly usage and preferences further down)](docs/assets/settings-health.png)
 
 </details>
 

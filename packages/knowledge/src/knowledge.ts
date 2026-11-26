@@ -16,6 +16,7 @@ import {
   listVersions,
   normalizeTags,
   type DocumentRow,
+  type SourceFormat,
   type VersionRow,
 } from "./documents.ts";
 import { extractHtml, extractPlain, type Extracted } from "./extract.ts";
@@ -79,6 +80,8 @@ export type CaptureTextInput = {
   title?: string;
   text: string;
   tags?: unknown;
+  /** 上传文件的原始格式（转换成 Markdown 之前），只用于展示。 */
+  format?: SourceFormat;
 };
 export type CaptureUrlInput = { clientRequestId: string; url: string; tags?: unknown };
 
@@ -122,7 +125,7 @@ export class KnowledgeService {
   // ---- 采集 ----------------------------------------------------------------
 
   /** 文本 / Markdown 的校验与准备：校验入参、原始字节写 blob（内容寻址，重复写入无害）；返回幂等用的规范化参数和事务内的写入函数。 */
-  planCaptureText(ownerId: string, input: { kind: "text" | "markdown"; title?: string; text: unknown; tags?: unknown }): CapturePlan {
+  planCaptureText(ownerId: string, input: { kind: "text" | "markdown"; title?: string; text: unknown; tags?: unknown; format?: SourceFormat }): CapturePlan {
     if (typeof input.text !== "string" || input.text.trim() === "") {
       throw new AppError("invalid_request", "text 不能为空", { issues: [{ path: "text" }] });
     }
@@ -133,13 +136,13 @@ export class KnowledgeService {
     const title = userTitle ?? defaultTitle(text, input.kind);
     const hash = this.#d.blobs.put(Buffer.from(text, "utf8"));
     const now = this.#d.clock.now();
-    const args: Json = { type: input.kind, title: userTitle ?? null, hash, tags };
+    const args: Json = { type: input.kind, title: userTitle ?? null, hash, tags, ...(input.format ? { format: input.format } : {}) };
     return {
       args,
       run: async (tx) => {
         const dup = await findTextDuplicate(tx, ownerId, hash);
         if (dup) return { documentId: dup.id, jobId: null, status: dup.status as CaptureResult["status"], deduplicated: true };
-        const doc = await insertDocument(tx, now, { ownerId, sourceType: input.kind, sourceUri: null, title, tags });
+        const doc = await insertDocument(tx, now, { ownerId, sourceType: input.kind, sourceUri: null, title, tags, ...(input.format ? { sourceFormat: input.format } : {}) });
         await insertVersion(tx, now, { documentId: doc.id, ownerId, contentHash: hash, rawBlob: hash, parserVersion: "pending" });
         const { job } = await enqueue(tx, now, { ownerId, kind: "ingest_text", dedupeKey: `ingest_text:${doc.id}`, input: { documentId: doc.id, kind: input.kind } });
         return { documentId: doc.id, jobId: job.id, status: "pending" as const, deduplicated: false };
@@ -432,6 +435,10 @@ export class KnowledgeService {
             }
             rawHash = this.#d.blobs.put(res.bytes);
             contentType = res.contentType ?? "";
+            const media = contentType.split(";")[0]?.trim().toLowerCase();
+            if (media === "application/pdf" || media === "application/x-pdf") {
+              await this.#d.db.run("UPDATE app_documents SET source_format = 'pdf' WHERE owner_id = ? AND id = ?", ownerId, doc.id);
+            }
           }
           await ctx.save({ raw: rawHash, contentType });
           fault("job.after_fetch"); // 原文已写入 blob、版本记录尚未写入（R13）

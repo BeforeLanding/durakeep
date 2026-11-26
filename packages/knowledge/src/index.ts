@@ -8,7 +8,7 @@ export { assertRobotsAllows, safeFetch, DEFAULT_POLICY, USER_AGENT, type FetchPo
 export { isPublicIp } from "./ssrf.ts";
 export { normalizeUrl, urlHash } from "./url.ts";
 export { blocksToMarkdown, FeishuDocsClient, feishuDocsFromEnv, loginWallFor, looksLikeLoginPage, parseFeishuUrl, type FeishuLink } from "./feishu.ts";
-export { normalizeTags, type DocumentRow, type VersionRow } from "./documents.ts";
+export { normalizeTags, type DocumentRow, type SourceFormat, type VersionRow } from "./documents.ts";
 export {
   KnowledgeService,
   MAX_TEXT_CHARS,

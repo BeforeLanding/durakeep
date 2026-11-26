@@ -455,12 +455,12 @@ test("上传 Word / HTML / GBK 文本：转成 Markdown 正文后可用；Word �
   const gbk = await json(await send(new File([new Uint8Array([0xc4, 0xe3, 0xba, 0xc3, 0xca, 0xc0, 0xbd, 0xe7])], "gbk.txt"))); // “你好世界”
   await done();
   const da = await detail(a.document_id as string);
-  expect(da).toMatchObject({ status: "ready", title: "飞书导出的周报", source_type: "markdown" });
+  expect(da).toMatchObject({ status: "ready", title: "飞书导出的周报", source_type: "markdown", source_format: "docx" });
   const text = await (await call("GET", `/v1/documents/${a.document_id}/versions/${(da.versions as J[])[0]!.id}/text`)).text();
   expect(text).toContain("# 复习计划");
-  expect(await detail(html.document_id as string)).toMatchObject({ status: "ready", title: "网页存档" });
+  expect(await detail(html.document_id as string)).toMatchObject({ status: "ready", title: "网页存档", source_format: "html" });
   const dg = await detail(gbk.document_id as string);
-  expect(dg.status).toBe("ready");
+  expect(dg).toMatchObject({ status: "ready", source_format: null });
   const gt = await (await call("GET", `/v1/documents/${gbk.document_id}/versions/${(dg.versions as J[])[0]!.id}/text`)).text();
   expect(gt).toContain("你好世界");
 });
@@ -526,9 +526,9 @@ test("PDF：上传与网页链接都能导入中文 PDF（需要 CMap 的编码�
   });
   const web = await json(await captureUrl(`http://pdf.test:${port}/paper.pdf`));
   await done();
-  for (const [id, title] of [[up.document_id, "读书笔记"], [web.document_id, "间隔重复"]] as const) {
+  for (const [id, title, type] of [[up.document_id, "读书笔记", "markdown"], [web.document_id, "间隔重复", "url"]] as const) {
     const d = await detail(id as string);
-    expect(d, String(title)).toMatchObject({ status: "ready", title });
+    expect(d, String(title)).toMatchObject({ status: "ready", title, source_type: type, source_format: "pdf" });
     const v = (d.versions as J[]).find((x) => x.current)!;
     expect(await (await call("GET", `/v1/documents/${id}/versions/${v.id}/text`)).text()).toContain("在即将遗忘时复习");
   }

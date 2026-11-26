@@ -37,8 +37,20 @@ const hostOf = (u: string | null) => {
     return "";
   }
 };
-const sourceLabel = (d: Doc) => (d.source_type === "url" ? (isFeishu(d.source_uri ?? "") ? "飞书文档" : hostOf(d.source_uri) || "网页") : d.source_type === "markdown" ? "Markdown" : "文本");
-const sourceIcon = (d: Doc) => (d.source_type === "url" ? "globe" : d.source_type === "markdown" ? "file" : "text");
+const FORMAT_LABEL: Record<string, string> = { pdf: "PDF", docx: "Word", html: "HTML" };
+const sourceLabel = (d: Doc) => {
+  if (d.source_type === "url") {
+    const where = isFeishu(d.source_uri ?? "") ? "飞书文档" : hostOf(d.source_uri) || "网页";
+    return d.source_format === "pdf" ? `${where} · PDF` : where;
+  }
+  if (d.source_format) return FORMAT_LABEL[d.source_format] ?? d.source_format;
+  return d.source_type === "markdown" ? "Markdown" : "文本";
+};
+const sourceIcon = (d: Doc) => (d.source_type === "url" ? "globe" : d.source_type === "markdown" || d.source_format ? "file" : "text");
+/** 图标底色：飞书蓝、网页青、PDF 红、Word 蓝，其余用主题色。 */
+const icoClass = (d: Doc) =>
+  d.source_type === "url" ? (isFeishu(d.source_uri ?? "") ? "feishu" : d.source_format === "pdf" ? "pdf" : "url") : (d.source_format ?? "");
+const PAGE = 50;
 
 export function Docs({ docId, feishu }: { docId: string | undefined; feishu: boolean }) {
   return docId ? <Detail id={docId} /> : <List feishu={feishu} />;
@@ -62,28 +74,45 @@ function List({ feishu }: { feishu: boolean }) {
   const [status, setStatus] = useState("");
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
-  const load = useCallback(() => {
-    const qs = new URLSearchParams();
-    if (q) qs.set("q", q);
-    if (status) qs.set("status", status);
-    api<{ items: Doc[] }>("GET", `/v1/documents?${qs}`).then(
-      (r) => {
-        setItems(r.items);
-        setLoaded(true);
-        setTick((t) => t + 1);
-      },
-      (e: Error) => setErr(e.message),
-    );
-  }, [q, status]);
-  useEffect(load, [load]);
-  useGlobalStream((ev) => ev === "job" && load());
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [want, setWant] = useState(PAGE); // 想显示的条数；“加载更多”每次加一页
+  const [more, setMore] = useState(false);
+  /** 从头取够 want 条（作业事件刷新时也保持已展开的条数，不会跳回第一页）。 */
+  const load = useCallback(async () => {
+    const base = new URLSearchParams();
+    if (q) base.set("q", q);
+    if (status) base.set("status", status);
+    try {
+      const all: Doc[] = [];
+      let next: string | null = null;
+      do {
+        const qs = new URLSearchParams(base);
+        qs.set("limit", String(Math.min(100, Math.max(PAGE, want - all.length))));
+        if (next) qs.set("cursor", next);
+        const r: { items: Doc[]; next_cursor: string | null } = await api("GET", `/v1/documents?${qs}`);
+        all.push(...r.items);
+        next = r.next_cursor;
+      } while (next && all.length < want);
+      setItems(all);
+      setCursor(next);
+      setLoaded(true);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setMore(false);
+    }
+  }, [q, status, want]);
+  useEffect(() => void load(), [load]);
+  useEffect(() => setWant(PAGE), [q, status]);
+  useGlobalStream((ev) => ev === "job" && void load());
   const failed = useFailedJobs(tick);
   const filtering = q !== "" || status !== "";
   const hits = useFullText(q);
   return (
     <div className="page">
       <PageHead title="资料" desc="收藏的网页、文档和笔记都会被切分索引，对话时自动检索并标注出处。" />
-      <Capture onDone={load} feishu={feishu} />
+      <Capture onDone={() => void load()} feishu={feishu} />
       <div className="toolbar">
         <div className="search">
           <Icon name="search" />
@@ -120,7 +149,7 @@ function List({ feishu }: { feishu: boolean }) {
           const job = failed.get(d.id);
           return (
             <li key={d.id}>
-              <div className={`doc-ico ${d.source_type === "url" ? (isFeishu(d.source_uri ?? "") ? "feishu" : "url") : ""}`}><Icon name={sourceIcon(d)} /></div>
+              <div className={`doc-ico ${icoClass(d)}`}><Icon name={sourceIcon(d)} /></div>
               <div className="doc-main">
                 <a href={`#/docs/${d.id}`}>{d.title}</a>
                 <div className="doc-meta">
@@ -138,6 +167,13 @@ function List({ feishu }: { feishu: boolean }) {
           );
         })}
       </ul>
+      {cursor && (
+        <div className="row" style={{ justifyContent: "center", marginTop: 14 }}>
+          <button disabled={more} onClick={() => { setMore(true); setWant(items.length + PAGE); }}>
+            {more ? <span className="spinner" /> : null}加载更多
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -379,7 +415,7 @@ function Detail({ id }: { id: string }) {
       {d && (
         <>
           <div className="doc-head">
-            <div className={`doc-ico ${d.source_type === "url" ? (isFeishu(d.source_uri ?? "") ? "feishu" : "url") : ""}`}><Icon name={sourceIcon(d)} /></div>
+            <div className={`doc-ico ${icoClass(d)}`}><Icon name={sourceIcon(d)} /></div>
             <div className="grow" style={{ minWidth: 0 }}>
               <h2>{d.title}</h2>
               <div className="doc-meta">

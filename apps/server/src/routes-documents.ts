@@ -12,6 +12,7 @@ const presentDoc = (d: DocumentRow) => ({
   id: d.id,
   source_type: d.sourceType,
   source_uri: d.sourceUri,
+  source_format: d.sourceFormat,
   title: d.title,
   status: d.status,
   tags: d.tags,
@@ -151,6 +152,7 @@ export function mountDocumentRoutes(
       r = await knowledge.captureText(owner.id, {
         clientRequestId: form.client_request_id as string,
         kind,
+        ...(uploadKind === "pdf" || uploadKind === "docx" || uploadKind === "html" ? { format: uploadKind } : {}),
         // 标题优先级：文档自己的标题 > 文件名（只当标题用）> 首行文字（由 captureText 兜底）
         title: ownTitle || (uploadKind === "html" ? titleFromFilename(file.name) : undefined) || undefined,
         text,

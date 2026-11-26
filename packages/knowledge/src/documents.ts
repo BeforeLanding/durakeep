@@ -2,6 +2,7 @@ import { AppError, uuidv7 } from "@durakeep/core";
 import type { SqlExecutor } from "@durakeep/db";
 
 export type SourceType = "text" | "markdown" | "url";
+export type SourceFormat = "pdf" | "docx" | "html";
 export type DocumentStatus = "pending" | "ready" | "failed" | "revoked" | "purging" | "purged";
 
 export type DocumentRow = {
@@ -9,6 +10,7 @@ export type DocumentRow = {
   ownerId: string;
   sourceType: SourceType;
   sourceUri: string | null;
+  sourceFormat: SourceFormat | null;
   title: string;
   status: DocumentStatus;
   currentVersionId: string | null;
@@ -39,6 +41,7 @@ type DocRaw = {
   owner_id: string;
   source_type: SourceType;
   source_uri: string | null;
+  source_format: SourceFormat | null;
   title: string;
   status: DocumentStatus;
   current_version_id: string | null;
@@ -63,7 +66,7 @@ type VerRaw = {
   captured_at: number;
 };
 
-const DOC_COLS = "id, owner_id, source_type, source_uri, title, status, current_version_id, tags_json, error_code, created_at, updated_at";
+const DOC_COLS = "id, owner_id, source_type, source_uri, source_format, title, status, current_version_id, tags_json, error_code, created_at, updated_at";
 const VER_COLS = "id, document_id, owner_id, content_hash, raw_blob, text_blob, parser_version, status, title, summary, summary_edited, char_count, captured_at";
 
 const toDoc = (r: DocRaw): DocumentRow => ({
@@ -71,6 +74,7 @@ const toDoc = (r: DocRaw): DocumentRow => ({
   ownerId: r.owner_id,
   sourceType: r.source_type,
   sourceUri: r.source_uri,
+  sourceFormat: r.source_format ?? null,
   title: r.title,
   status: r.status,
   currentVersionId: r.current_version_id,
@@ -140,16 +144,17 @@ export async function findTextDuplicate(tx: SqlExecutor, ownerId: string, conten
 export async function insertDocument(
   tx: SqlExecutor,
   now: number,
-  d: { ownerId: string; sourceType: SourceType; sourceUri: string | null; title: string; tags: string[] },
+  d: { ownerId: string; sourceType: SourceType; sourceUri: string | null; title: string; tags: string[]; sourceFormat?: SourceFormat },
 ): Promise<DocumentRow> {
   const id = uuidv7(now);
   await tx.run(
-    `INSERT INTO app_documents (id, owner_id, source_type, source_uri, title, status, tags_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+    `INSERT INTO app_documents (id, owner_id, source_type, source_uri, source_format, title, status, tags_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
     id,
     d.ownerId,
     d.sourceType,
     d.sourceUri,
+    d.sourceFormat ?? null,
     d.title,
     JSON.stringify(d.tags),
     now,

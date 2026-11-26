@@ -38,7 +38,7 @@ pnpm demo
 <details>
 <summary>更多截图：设置与健康页</summary>
 
-![设置与健康页中的运行状态、备份、月度用量和偏好设置](docs/assets/settings-health.png)
+![设置与健康页：个人资料、修改口令、登录设备管理，以及运行状态（往下还有月度用量与偏好设置）](docs/assets/settings-health.png)
 
 </details>
 

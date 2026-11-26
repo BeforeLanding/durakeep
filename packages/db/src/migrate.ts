@@ -328,6 +328,11 @@ export const MIGRATIONS: readonly { id: number; sql: string }[] = [
       ALTER TABLE app_sessions ADD COLUMN persistent INTEGER NOT NULL DEFAULT 1;
     `,
   },
+  {
+    // 资料的原始格式（上传的 PDF / Word / HTML 会转成 Markdown 存储；网页链接指向 PDF 时也记 pdf），只用于展示
+    id: 14,
+    sql: `ALTER TABLE app_documents ADD COLUMN source_format TEXT CHECK (source_format IN ('pdf','docx','html'));`,
+  },
 ];
 
 export async function migrate(db: SqlDatabase): Promise<number> {

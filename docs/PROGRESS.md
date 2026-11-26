@@ -324,3 +324,12 @@
 - **小修。** `md.tsx` 嵌套列表前缀误写成了不换行空格（上一次提交引入），已改回普通空格；扫描了本轮改过的所有源文件，没有其他不可见字符（`ingest.test.ts` 里的 BOM 是有意的测试数据）。
 - **测试。** 新增 `pdf.test.ts`（3：需要 CMap 的中文 PDF、无文字层 / 非 PDF / 损坏、行拼段规则）、`ingest.test.ts` 新增 PDF 上传与 PDF 链接端到端用例；原先断言“PDF 不支持”的 3 处改为新行为（不支持类型改用图片 / pptx 验证，损坏 PDF 为 `extract_failed`），`safe-fetch` 的大小上限用例改为 20 MB；`conversations.test.ts` 补 `archived=1`。`pnpm test` 59 文件 302 用例通过，`pnpm lint` 通过；`pnpm test:recovery` 18、`pnpm test:upgrade` 20 用例通过，`pnpm test:e2e` 通过。手动（demo）：经页面会话上传中文 PDF → 可用；对话改名、归档后只读与“已归档”分组。零付费模型调用。
 
+## 2026-11-26 资料分页、原始格式、暗色检查、演示素材重录
+
+- **资料列表分页。** 资料页原来只请求第一页（接口默认 20 条），也没有“加载更多”，第 21 份以后的资料在列表里看不到（与上一条记录里对话侧栏的问题同类）。现在每页 50 条，底部“加载更多”；作业事件触发刷新时按已展开的条数重新取，不会跳回第一页。手动（demo）：建到 58 份资料，首屏 50 条，加载更多后 58 条、无重复、按钮消失。
+- **原始格式。** 迁移 14：`app_documents.source_format`（`pdf` / `docx` / `html`，可空，只用于展示）。上传的 PDF / Word / HTML 转成 Markdown 存储，之前列表里一律显示“Markdown”；现在显示 PDF / Word / HTML，并用不同颜色的图标；网页链接抓到的是 PDF 时记为 `pdf`（显示“域名 · PDF”）。`GET /v1/documents` 与详情返回 `source_format`。04 数据模型补上这一列，并补上 11-25 漏记的迁移 13（`app_sessions.user_agent`、`persistent`）。
+- **暗色模式。** 在内置浏览器里以暗色检查了对话、资料、设置页：对比度、卡片、状态标签、当前导航项都清楚，没有需要改的地方。
+- **演示素材。** `scripts/record-demo.ts` 开头在欢迎页停留 1.8 秒，并在录完 GIF 后用同一个 demo 重新截取 `chat-citations.png` 与 `settings-health.png`（1360×920，与旧图同尺寸）。重录结果：GIF 16.4 秒、960 宽、455 KB（新界面渐变多，比旧版 197 KB 大）。README 中设置页截图的说明文字按新内容改写。零付费模型调用（faux 模型）。
+- **测试。** `ingest.test.ts` 断言 Word / HTML / PDF 上传与 PDF 链接的 `source_format`；迁移计数与 R11 升级用例更新到 14。`pnpm test` 59 文件 302 用例通过，`pnpm test:upgrade` 20 用例通过，`pnpm lint` 通过，`pnpm test:e2e` 通过。`pnpm test:recovery` 第一次运行时 `t11` 的 ingress.after_insert × 20 用例耗时 6,631 秒后失败（像是机器休眠或负载导致的挂起；本轮没有改对话入口代码）；单独重跑该文件 2/2 通过，整套重跑 10 文件 18 用例全部通过（830 秒）。记为偶发，未改代码。
+- **核对上一条。** `da4e9f0` 推送后的 CI 四个任务全部通过（`gh run watch` 自身以退出码 4 结束，与构建无关）。
+

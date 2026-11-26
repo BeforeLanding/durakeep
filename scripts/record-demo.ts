@@ -1,5 +1,5 @@
 // 录制 README 演示 GIF：隔离启动 demo（faux 模型，零费用），用 Playwright 录屏，再由 ffmpeg 裁掉等待并导出。
-// 用法：node scripts/record-demo.ts   产出 docs/assets/demo.gif（需要 ffmpeg 与本机 Edge/Chrome）
+// 用法：node scripts/record-demo.ts   产出 docs/assets/demo.gif，并顺带更新 README 用的两张截图（需要 ffmpeg 与本机 Edge/Chrome）
 import { chromium } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -41,9 +41,10 @@ try {
   await page.goto(demo.url);
   await page.getByPlaceholder("口令").fill("demodemo");
   await page.getByRole("button", { name: "登录" }).click();
-  await page.waitForTimeout(500);
+  await page.getByText("问问你收藏过的资料").waitFor();
   const start = now(); // 登录前的画面不进 GIF
   grabber = grab();
+  await page.waitForTimeout(1800); // 欢迎页：问候、资料 / 记忆 / 提醒计数、示例问题
 
   await nav("资料");
   await page.getByRole("button", { name: "粘贴文本" }).click();
@@ -96,6 +97,22 @@ try {
   execFileSync("ffmpeg", ["-v", "error", "-y", ...input, "-vf", `${vf},palettegen=max_colors=96`, palette]);
   execFileSync("ffmpeg", ["-v", "error", "-y", ...input, "-i", palette, "-lavfi", `${vf}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4`, gif]);
   console.log(`${kept.length} 帧，裁掉 ${(cut[1] - cut[0]).toFixed(1)}s 等待 → ${gif}`);
+
+  // README 截图：与旧图同尺寸（1360×920）
+  await page.setViewportSize({ width: 1360, height: 920 });
+  await nav("对话");
+  await page.getByRole("complementary").getByRole("link").first().click();
+  const shotCite = page.locator(".msg.assistant .cite").filter({ hasText: "[1]" }).first();
+  await shotCite.hover();
+  await page.locator(".tip").first().waitFor();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: join(root, "docs", "assets", "chat-citations.png") });
+  await page.mouse.move(5, 5);
+  await nav("设置");
+  await page.getByText("数据库逻辑大小", { exact: true }).waitFor();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: join(root, "docs", "assets", "settings-health.png") });
+  console.log("截图已更新：chat-citations.png、settings-health.png");
 } finally {
   await browser.close().catch(() => undefined);
   await demo.stop();

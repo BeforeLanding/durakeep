@@ -118,7 +118,7 @@ POST /v1/conversations/01J…/messages
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/v1/documents?status=&tag=&q=&cursor=` | 列表；`q` 按标题前缀匹配 |
+| GET | `/v1/documents?status=&tag=&q=&limit=&cursor=` | 列表，按 `updated_at` 倒序；`q` 按标题前缀匹配；`limit` 默认 20、最大 100，`next_cursor` 非空时还有下一页。每项含 `source_format`（`pdf` / `docx` / `html` / `null`：上传或链接的原始格式，只用于展示） |
 | POST | `/v1/documents` | 采集，见下文 |
 | GET | `/v1/documents/:id` | 详情，含版本列表 |
 | GET | `/v1/documents/:id/versions/:vid/text` | 抽取出的正文（`text/markdown`） |

@@ -426,6 +426,9 @@ mark { background: color-mix(in srgb, #facc15 45%, transparent); color: inherit;
 .doc-list li:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .doc-ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; flex: none; background: var(--acc-soft); color: var(--acc); }
 .doc-ico.url { background: color-mix(in srgb, #0891b2 14%, transparent); color: #0891b2; }
+.doc-ico.pdf { background: color-mix(in srgb, #dc2626 13%, transparent); color: #dc2626; }
+.doc-ico.docx { background: color-mix(in srgb, #2563eb 13%, transparent); color: #2563eb; }
+.doc-ico.html { background: color-mix(in srgb, #ea580c 13%, transparent); color: #ea580c; }
 .doc-ico.feishu { background: color-mix(in srgb, #3370ff 14%, transparent); color: #3370ff; }
 .doc-main { flex: 1; min-width: 0; }
 .doc-main a { color: var(--fg); font-weight: 600; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

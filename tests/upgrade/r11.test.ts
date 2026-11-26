@@ -38,8 +38,8 @@ test.each(Array.from({ length: 20 }, (_, i) => ({ round: i + 1, restartLimit: i 
     const raw = await openAppDatabase(join(copyDir, "app.sqlite"));
     const db = guardDb(raw);
     closeCandidate = () => db.close();
-    expect(await migrate(db)).toBe(3);
-    expect(await db.all("SELECT id FROM app_migrations WHERE id > 10 ORDER BY id")).toEqual([{ id: 11 }, { id: 12 }, { id: 13 }]);
+    expect(await migrate(db)).toBe(4);
+    expect(await db.all("SELECT id FROM app_migrations WHERE id > 10 ORDER BY id")).toEqual([{ id: 11 }, { id: 12 }, { id: 13 }, { id: 14 }]);
     const events = new EventStore(db, systemClock);
     const { auth, app } = createApp({ db, clock: systemClock, events, origin });
     const owner = await auth.initOwner({ password: "fixture password", timezone: "UTC" });

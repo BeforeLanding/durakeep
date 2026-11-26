@@ -55,7 +55,9 @@ CREATE TABLE app_sessions (
   owner_id     TEXT NOT NULL REFERENCES app_owners(id),
   created_at   INTEGER NOT NULL,
   expires_at   INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL
+  last_seen_at INTEGER NOT NULL,
+  user_agent   TEXT,                      -- 迁移 13：只存“浏览器 · 系统”摘要，不存完整 User-Agent
+  persistent   INTEGER NOT NULL DEFAULT 1 -- 迁移 13：1=保持登录（14 天、活跃时滑动续期）；0=浏览器会话（12 小时、不续期）
 );
 
 -- 会话与入口 ---------------------------------------------------------
@@ -107,6 +109,7 @@ CREATE TABLE app_documents (
   owner_id      TEXT NOT NULL,
   source_type   TEXT NOT NULL CHECK (source_type IN ('text','markdown','url')),
   source_uri    TEXT,                     -- url 类型为规范化后的 URL；其他类型为 NULL
+  source_format TEXT CHECK (source_format IN ('pdf','docx','html')), -- 迁移 14：上传 / 链接的原始格式，只用于展示
   title         TEXT NOT NULL,
   status        TEXT NOT NULL CHECK (status IN ('pending','ready','failed','revoked','purging','purged')),
   current_version_id TEXT,
